@@ -276,11 +276,98 @@ pub async fn dispatch(cli: Cli, paths: &AppPaths, config: &Config) -> Result<Exi
         Command::Run(arguments) => run(arguments, paths, config).await,
         Command::RunShell(arguments) => run_shell(arguments, paths, config).await,
         Command::Internal(arguments) => internal(arguments, paths, config).await,
+        Command::Wait(arguments) => wait(arguments, paths).await,
+        Command::Status(arguments) => status(arguments, paths),
+        Command::List(arguments) => list(arguments, paths),
+        Command::Logs(arguments) => logs(arguments, paths).await,
         command => Err(Error::Unavailable(format!(
             "`longrun {}` is not available until the runtime is initialized",
             command.name()
         ))),
     }
+}
+
+fn status(arguments: JobArgs, paths: &AppPaths) -> Result<ExitCode> {
+    let status = Store::open(paths.state_dir.join("longrun.sqlite"))?.status(arguments.job_id)?;
+    write_status(&status, arguments.json)?;
+    Ok(ExitCode::SUCCESS)
+}
+
+fn list(arguments: ListArgs, paths: &AppPaths) -> Result<ExitCode> {
+    let state = arguments.state.as_deref().map(str::parse).transpose()?;
+    let jobs = Store::open(paths.state_dir.join("longrun.sqlite"))?.list(state)?;
+    if arguments.json {
+        serde_json::to_writer(std::io::stdout(), &jobs)?;
+        std::io::stdout().write_all(b"\n")?;
+    } else {
+        for job in jobs {
+            println!(
+                "{}\t{}\t{}",
+                job.job_id,
+                job.execution_state.as_str(),
+                job.delivery_state.as_str()
+            );
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+async fn wait(arguments: JobArgs, paths: &AppPaths) -> Result<ExitCode> {
+    loop {
+        let status =
+            Store::open(paths.state_dir.join("longrun.sqlite"))?.status(arguments.job_id)?;
+        if status.execution_state.is_terminal() {
+            write_status(&status, arguments.json)?;
+            return Ok(status
+                .result
+                .as_ref()
+                .map_or(ExitCode::from(70), result_exit_code));
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+}
+
+async fn logs(arguments: LogsArgs, paths: &AppPaths) -> Result<ExitCode> {
+    let suffix = if arguments.stderr { "stderr" } else { "stdout" };
+    let path = paths
+        .log_dir
+        .join(format!("{}.{}.log", arguments.job_id, suffix));
+    let mut offset = 0usize;
+    loop {
+        let bytes = match tokio::fs::read(&path).await {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(error) => return Err(error.into()),
+        };
+        if bytes.len() > offset {
+            std::io::stdout().write_all(&bytes[offset..])?;
+            offset = bytes.len();
+        }
+        if !arguments.follow
+            || Store::open(paths.state_dir.join("longrun.sqlite"))?
+                .status(arguments.job_id)?
+                .execution_state
+                .is_terminal()
+        {
+            return Ok(ExitCode::SUCCESS);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+}
+
+fn write_status(status: &crate::store::JobStatus, json: bool) -> Result<()> {
+    if json {
+        serde_json::to_writer(std::io::stdout(), status)?;
+        std::io::stdout().write_all(b"\n")?;
+    } else {
+        println!(
+            "Job: {}\nExecution: {}\nDelivery: {}",
+            status.job_id,
+            status.execution_state.as_str(),
+            status.delivery_state.as_str()
+        );
+    }
+    Ok(())
 }
 
 async fn run(arguments: ExecutionArgs, paths: &AppPaths, config: &Config) -> Result<ExitCode> {

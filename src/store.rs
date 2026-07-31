@@ -4,7 +4,7 @@ use std::{
     path::Path,
 };
 
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 use uuid::Uuid;
 
@@ -17,6 +17,14 @@ use crate::{
 
 pub struct Store {
     connection: Connection,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct JobStatus {
+    pub job_id: Uuid,
+    pub execution_state: ExecutionState,
+    pub delivery_state: DeliveryState,
+    pub result: Option<JobResult>,
 }
 
 impl Store {
@@ -354,6 +362,64 @@ impl Store {
             |row| row.get(0),
         )?;
         Ok(serde_json::from_str(&result)?)
+    }
+
+    pub fn status(&self, job_id: Uuid) -> Result<JobStatus> {
+        let (execution, delivery): (String, String) = self.connection.query_row(
+            "SELECT executions.state, deliveries.state
+             FROM executions JOIN deliveries USING (job_id) WHERE job_id = ?1",
+            [job_id.to_string()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        let result = self
+            .connection
+            .query_row(
+                "SELECT result_json FROM results WHERE job_id = ?1",
+                [job_id.to_string()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .map(|value| serde_json::from_str(&value))
+            .transpose()?;
+        Ok(JobStatus {
+            job_id,
+            execution_state: execution.parse()?,
+            delivery_state: delivery.parse()?,
+            result,
+        })
+    }
+
+    pub fn list(&self, state: Option<ExecutionState>) -> Result<Vec<JobStatus>> {
+        let sql = "SELECT jobs.job_id, executions.state, deliveries.state, results.result_json
+                   FROM jobs
+                   JOIN executions USING (job_id)
+                   JOIN deliveries USING (job_id)
+                   LEFT JOIN results USING (job_id)
+                   WHERE (?1 IS NULL OR executions.state = ?1)
+                   ORDER BY jobs.created_at_ms DESC";
+        let mut statement = self.connection.prepare(sql)?;
+        let rows = statement.query_map([state.map(ExecutionState::as_str)], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+            ))
+        })?;
+        rows.map(|row| {
+            let (job_id, execution, delivery, result) = row?;
+            Ok(JobStatus {
+                job_id: Uuid::parse_str(&job_id).map_err(|error| {
+                    Error::InvalidInput(format!("invalid stored job id: {error}"))
+                })?,
+                execution_state: execution.parse()?,
+                delivery_state: delivery.parse()?,
+                result: result
+                    .map(|value| serde_json::from_str(&value))
+                    .transpose()?,
+            })
+        })
+        .collect()
     }
 
     pub fn transition_execution(&mut self, job_id: Uuid, next: ExecutionState) -> Result<()> {

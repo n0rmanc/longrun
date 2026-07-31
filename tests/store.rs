@@ -82,3 +82,21 @@ fn file_store_migrates_with_wal() {
     assert_eq!(store.journal_mode().expect("journal mode"), "wal");
     fs::remove_dir_all(root).expect("remove test state");
 }
+
+#[test]
+fn status_and_newest_first_list_expose_execution_and_delivery_state() {
+    let mut store = Store::open_in_memory().expect("store");
+    let first = specification();
+    let second = specification();
+    store.create_job(&first).expect("first");
+    store.create_job(&second).expect("second");
+
+    let status = store.status(first.job_id).expect("status");
+    assert_eq!(status.execution_state, ExecutionState::Accepted);
+    assert_eq!(
+        status.delivery_state,
+        longrun::protocol::DeliveryState::Undelivered
+    );
+    let jobs = store.list(Some(ExecutionState::Accepted)).expect("list");
+    assert_eq!(jobs.len(), 2);
+}
