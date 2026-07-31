@@ -103,3 +103,16 @@ commits required by the constitution.
   --locked`; and `cargo clippy --all-targets -- -D warnings`.
 - Review: the test observes the actual runner-to-sandbox process boundary; it
   does not duplicate command construction or rely on implementation internals.
+
+## Explicit Environment Policy
+
+- 2026-07-31: completed the job-owned environment allowlist: the runner starts
+  with a safe fixed platform baseline and inherits only names recorded in the
+  immutable job policy. `--env-pass` may explicitly opt in a secret-like name;
+  an unlisted secret remains absent.
+- Focused check: the binary-level security fixture injects a `TOKEN` and a
+  `SECRET` into Longrun's parent environment, passes only the former, and
+  observes `allowed|missing` in the sandboxed child.
+- Review: the runner consumes the job's signed policy rather than mutable
+  ambient configuration, so hook-receipted and direct jobs share one exact
+  inheritance rule.
