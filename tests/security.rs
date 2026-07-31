@@ -1,7 +1,14 @@
 #[cfg(unix)]
 mod unix {
-    use std::{ffi::OsString, fs, os::unix::fs::PermissionsExt, process::Command};
+    use std::{ffi::OsString, fs, os::unix::fs::PermissionsExt, path::Path, process::Command};
 
+    use longrun::{
+        hook::{
+            input::{BashInput, PreToolUseInput},
+            pre_tool_use::handle_pre_tool_use,
+        },
+        store::Store,
+    };
     use uuid::Uuid;
 
     fn setup() -> std::path::PathBuf {
@@ -28,6 +35,20 @@ mod unix {
             ),
         );
         command
+    }
+
+    fn pre_tool_use(command: &str) -> PreToolUseInput {
+        PreToolUseInput {
+            session_id: "session".into(),
+            turn_id: "turn".into(),
+            tool_use_id: "tool".into(),
+            cwd: std::env::current_dir().expect("cwd"),
+            hook_event_name: "PreToolUse".into(),
+            tool_name: "Bash".into(),
+            tool_input: BashInput {
+                command: command.into(),
+            },
+        }
     }
 
     #[test]
@@ -104,5 +125,72 @@ mod unix {
                 .contains("danger-full-access requires explicit configuration")
         );
         fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn hook_requires_the_absolute_installed_binary_and_rejects_path_shadowing() {
+        let mut store = Store::open_in_memory().expect("store");
+        let expected = Path::new("/opt/longrun");
+
+        assert!(
+            handle_pre_tool_use(
+                &pre_tool_use("longrun submit -- /bin/echo shadowed"),
+                expected,
+                &mut store,
+                1,
+            )
+            .expect("hook")
+            .is_none()
+        );
+        assert!(
+            handle_pre_tool_use(
+                &pre_tool_use("\"/tmp/longrun\" submit -- /bin/echo shadowed"),
+                expected,
+                &mut store,
+                1,
+            )
+            .expect("hook")
+            .is_none()
+        );
+        assert!(
+            handle_pre_tool_use(
+                &pre_tool_use("longrun submit -- /bin/echo relative"),
+                Path::new("longrun"),
+                &mut store,
+                1,
+            )
+            .expect("hook")
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn direct_arguments_with_shell_metacharacters_remain_literal() {
+        let root = setup();
+        let target_marker = root.join("metacharacter-ran");
+        let argument = format!("literal; touch {}", target_marker.display());
+        let output = longrun(&root)
+            .args([
+                OsString::from("run"),
+                OsString::from("--"),
+                OsString::from("/usr/bin/printf"),
+                OsString::from(&argument),
+            ])
+            .output()
+            .expect("run longrun");
+
+        assert_eq!(output.status.code(), Some(0));
+        assert_eq!(output.stdout, argument.as_bytes());
+        assert!(!target_marker.exists());
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn consumed_receipt_nonce_cannot_be_replayed() {
+        let mut store = Store::open_in_memory().expect("store");
+        store
+            .consume_receipt_once("nonce")
+            .expect("first consumption");
+        assert!(store.consume_receipt_once("nonce").is_err());
     }
 }

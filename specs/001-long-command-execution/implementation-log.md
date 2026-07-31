@@ -128,3 +128,14 @@ commits required by the constitution.
   danger-full-access direct request before sandbox spawn.
 - Review: failure propagates as the sandbox status, with no direct-execution
   fallback or permission-profile substitution.
+
+## Argument, Path, and Replay Boundaries
+
+- 2026-07-31: added security coverage for absolute installed-binary matching,
+  PATH-shadow rejection, direct-argument shell-metacharacter preservation, and
+  consumed receipt nonce replay rejection.
+- Focused checks: a fake sandbox executes `/usr/bin/printf` with a literal
+  semicolon-containing argument and never creates the attempted marker; hook
+  matching ignores relative and alternate binary paths.
+- Review: command authority stays with the exact installed binary and direct
+  argv reaches the sandbox without shell reparsing.

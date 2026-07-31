@@ -143,7 +143,7 @@ or elevated access.
 
 - [X] T041 [P] [US6] Add failing environment allowlist, deny-pattern, and explicit secret-pass tests in `tests/security.rs`
 - [X] T042 [P] [US6] Add failing sandbox-denial and no-escalation tests in `tests/security.rs`
-- [ ] T043 [P] [US6] Add failing absolute-binary, PATH-shadowing, shell-metacharacter, and replay tests in `tests/security.rs`
+- [X] T043 [P] [US6] Add failing absolute-binary, PATH-shadowing, shell-metacharacter, and replay tests in `tests/security.rs`
 - [ ] T044 [P] [US6] Add failing Unix process-group and Windows Job Object cleanup tests in `tests/process_tree.rs`
 
 ### Implementation for User Story 6
