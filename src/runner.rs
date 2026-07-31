@@ -72,6 +72,14 @@ impl Runner {
         copy_safe_environment(&mut command, job);
         platform::configure_command(&mut command)?;
         let mut child = command.spawn()?;
+        let process_tree = match platform::track_child(&child) {
+            Ok(process_tree) => process_tree,
+            Err(error) => {
+                let _ = child.start_kill();
+                let _ = child.wait().await;
+                return Err(error);
+            }
+        };
         let stdout = child
             .stdout
             .take()
@@ -90,7 +98,7 @@ impl Runner {
                 (if status.success() { ExecutionState::Succeeded } else { ExecutionState::Failed }, status.code())
             }
             _ = &mut timeout => {
-                let _ = platform::terminate(&mut child, config.execution.termination_grace_ms).await?;
+                let _ = platform::terminate(&mut child, &process_tree, config.execution.termination_grace_ms).await?;
                 (ExecutionState::TimedOut, None)
             }
         };

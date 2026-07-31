@@ -139,3 +139,17 @@ commits required by the constitution.
   matching ignores relative and alternate binary paths.
 - Review: command authority stays with the exact installed binary and direct
   argv reaches the sandbox without shell reparsing.
+
+## Cross-Platform Process-Tree Ownership
+
+- 2026-07-31: completed the shared process-tree ownership boundary. Unix jobs
+  use their own process group and terminate it with SIGTERM then SIGKILL.
+  Windows jobs create a Job Object, assign the spawned sandbox process, set
+  kill-on-close, attempt CTRL_BREAK during the configured grace period, and
+  terminate the whole Job Object if it remains alive.
+- Focused checks: the Unix fixture proves its background descendant is gone
+  after timeout; `cargo check --locked --target x86_64-pc-windows-gnu`
+  compiles the Job Object implementation and the Windows timeout fixture.
+- Review: the runner retains the cleanup owner until process exit and kills
+  the just-spawned child if Job Object assignment fails; no timeout path
+  bypasses platform cleanup.
