@@ -6,6 +6,7 @@ pub mod error;
 pub mod hook;
 pub mod output;
 pub mod paths;
+pub mod platform;
 pub mod protocol;
 pub mod receipt;
 pub mod runner;

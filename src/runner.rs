@@ -12,6 +12,7 @@ use crate::{
     error::{Error, Result},
     output::byte_tail,
     paths::AppPaths,
+    platform,
     protocol::{ExecutionState, JobResult, JobSpecification, NativeString, ShellMode},
 };
 
@@ -71,6 +72,7 @@ impl Runner {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         copy_safe_environment(&mut command, job, config);
+        platform::configure_command(&mut command)?;
         let mut child = command.spawn()?;
         let stdout = child
             .stdout
@@ -90,8 +92,7 @@ impl Runner {
                 (if status.success() { ExecutionState::Succeeded } else { ExecutionState::Failed }, status.code())
             }
             _ = &mut timeout => {
-                child.kill().await?;
-                let _ = child.wait().await?;
+                let _ = platform::terminate(&mut child, config.execution.termination_grace_ms).await?;
                 (ExecutionState::TimedOut, None)
             }
         };

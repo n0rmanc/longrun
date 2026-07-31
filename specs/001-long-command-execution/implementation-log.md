@@ -73,3 +73,12 @@ commits required by the constitution.
   through a fake `codex sandbox`, returning one same-turn completion object.
 - Review: PostToolUse never starts a command itself; only the claimed worker
   does. A replay fails before another job can be created or executed.
+
+## Unix Process-Tree Timeout
+
+- 2026-07-31: configured the sandbox child as a Unix process-group leader and
+  route timeout through SIGTERM then SIGKILL after the configured grace period.
+- Focused check: spawned a background `sleep` descendant, timed out the owner,
+  and proved `kill -0` could no longer find the recorded descendant PID.
+- Review: this is the shared timeout path used by the runner; Windows Job
+  Objects and cancellation wiring remain separate unfinished platform work.

@@ -50,6 +50,11 @@ impl Config {
                 "execution.concurrency must be positive".into(),
             ));
         }
+        if self.execution.termination_grace_ms == 0 {
+            return Err(Error::Config(
+                "execution.termination_grace_ms must be positive".into(),
+            ));
+        }
         if self.output.model_max_bytes == 0 || self.output.tail_bytes == 0 {
             return Err(Error::Config("output byte limits must be positive".into()));
         }
@@ -76,6 +81,7 @@ pub struct ExecutionConfig {
     pub permission_profile: String,
     pub allow_shell: bool,
     pub allow_danger_full_access: bool,
+    pub termination_grace_ms: u64,
     pub concurrency: usize,
 }
 
@@ -86,6 +92,7 @@ impl Default for ExecutionConfig {
             permission_profile: ":workspace".into(),
             allow_shell: false,
             allow_danger_full_access: false,
+            termination_grace_ms: 5_000,
             concurrency: 32,
         }
     }
