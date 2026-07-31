@@ -115,6 +115,15 @@ Runs the durable supervisor event loop.
 
 Manages only Longrun's per-user service. `install` is explicit and idempotent.
 
+## Internal worker
+
+### `longrun internal worker JOB_ID`
+
+Private process boundary used by embedded and durable owners. It acquires the
+exclusive execution claim, launches the sandboxed requested command, persists
+the terminal result, and exits. It is hidden from normal help and rejects jobs
+whose claim is already held or terminal.
+
 ## Hook entrypoints
 
 All hook commands read one Codex hook JSON object from stdin and write either

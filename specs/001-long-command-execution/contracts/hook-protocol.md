@@ -112,8 +112,9 @@ Behavior:
 1. Report integration health and the absolute `longrun submit` invocation.
 2. Search only for completed, undelivered results targeting the session.
 3. Acquire a delivery lease before returning a result.
-4. Return bounded recovery context and mark delivered only after successful
-   hook completion.
+4. Return bounded recovery context with the stable delivery idempotency key.
+5. Record successful hook emission. If completion is uncertain after a crash,
+   retry only with the same idempotency key.
 
 Output:
 

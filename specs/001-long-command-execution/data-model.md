@@ -105,6 +105,8 @@ terminal state.
 | state | enum | Follows transition graph |
 | owner_mode | embedded or supervisor | One owner at a time |
 | owner_id | string | Hook or supervisor instance |
+| execution_claim | random token or null | Exactly one worker may hold it |
+| worker_id | UUID or null | Set before requested-command spawn |
 | pid | integer or null | Present after spawn |
 | process_group | platform identifier or null | Present when supported |
 | started_at | timestamp or null | Set once |
@@ -157,6 +159,10 @@ Execution state never moves backward when delivery is retried.
 | attempt_count | integer | Monotonic |
 | delivered_at | timestamp or null | Set once |
 | idempotency_key | string | Unique per final delivery |
+
+Repeated uncertain delivery attempts retain the same idempotency key so the
+receiver can identify one logical result even when the hook protocol cannot
+acknowledge consumption.
 
 ## SupervisorInstance
 

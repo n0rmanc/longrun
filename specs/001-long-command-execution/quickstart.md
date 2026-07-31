@@ -87,7 +87,7 @@ Expected:
 ## Timeout and process-tree test
 
 ```bash
-cargo test --test runner process_tree_timeout -- --exact --nocapture
+cargo test --test process_tree process_tree_timeout -- --exact --nocapture
 ```
 
 Expected: the parent and all descendants are gone after the configured grace
@@ -107,8 +107,9 @@ for completion, then resume the same session.
 Expected:
 
 - the job survives Codex termination;
-- `SessionStart` delivers the result once;
+- `SessionStart` delivers one logical result identity;
 - the job is not executed again;
+- uncertain recovery retries retain the same idempotency key;
 - no automatic `codex exec resume` occurs unless explicitly enabled.
 
 ## Sandbox denial

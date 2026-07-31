@@ -201,3 +201,55 @@ may contain prompt-injection text or credentials.
 
 - Return all output: unbounded token use and injection exposure.
 - Store only tails: removes evidence needed for diagnostics.
+
+## Decision 11: Put the at-most-once boundary in an internal worker
+
+**Decision**: Both embedded hooks and the durable supervisor launch
+`longrun internal worker JOB_ID`. The worker must acquire an exclusive execution
+claim before spawning the requested command. Only the worker can transition the
+job to running.
+
+**Rationale**: No parent process can atomically combine OS process creation and
+database persistence. A crash after spawn but before recording the PID can make
+a recovery path start the command twice. A separate claim-owning worker makes
+duplicate parent launches harmless because only one worker reaches command
+spawn.
+
+**Alternatives considered**:
+
+- Mark running before spawn: a crash can strand a job that never started.
+- Mark running after spawn: a crash gap can duplicate execution.
+- Detect only by PID: the PID may never have been persisted and can be reused.
+
+## Decision 12: Define delivery as effectively once
+
+**Decision**: Every delivery has a stable idempotency key and one active lease.
+Retries reuse the same identity. Exactly one resume process may be started, but
+a hook envelope may be repeated after an uncertain crash boundary.
+
+**Rationale**: Current Codex hooks do not acknowledge that the host consumed
+stdout after the hook process exits. Strict exactly-once delivery is therefore
+not provable. Effectively-once delivery preserves safety and lets duplicate
+envelopes be recognized without claiming an impossible guarantee.
+
+**Alternatives considered**:
+
+- Mark delivered before writing stdout: can lose a result.
+- Mark delivered after writing stdout: can repeat an envelope after a crash.
+- Claim strict exactly once: not supported by the current hook protocol.
+
+## Decision 13: Publish one CLI through binary and source channels
+
+**Decision**: Produce checksummed release archives for macOS, Linux, and
+Windows, an installer that verifies them, a Homebrew formula, and Cargo package
+metadata.
+
+**Rationale**: Ordinary users should not need a Rust toolchain, while developers
+retain a standard source-install path. All channels install the same binary,
+which remains the authority for Codex integration.
+
+**Alternatives considered**:
+
+- Cargo-only installation: requires a toolchain and long local build.
+- Binary inside the Codex plugin: does not create a normal terminal command and
+  multiplies plugin size by platform.

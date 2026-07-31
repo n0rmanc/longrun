@@ -25,7 +25,8 @@ Rust 1.97.0
 **Primary Dependencies**: `clap` 4, `tokio` 1.49, `serde`, `serde_json`,
 `toml`, `uuid`, `rusqlite` with bundled SQLite, `directories`, `thiserror`,
 `anyhow`, `tracing`, `tracing-subscriber`, `base64`, `hmac`, `sha2`, and
-`zeroize`; target-specific `nix` and `windows-sys`
+`zeroize`; `rmcp` for the structured stdio adapter; target-specific `nix` and
+`windows-sys`
 
 **Storage**: SQLite in WAL mode for execution and delivery state; immutable JSON
 job specifications and results; separate append-only stdout/stderr log files;
@@ -111,7 +112,9 @@ src/
 ├── store.rs
 ├── output.rs
 ├── runner.rs
+├── worker.rs
 ├── supervisor.rs
+├── mcp.rs
 ├── ipc/
 │   ├── mod.rs
 │   ├── unix.rs
@@ -129,7 +132,8 @@ src/
 │   └── session_start.rs
 └── integration/
     ├── mod.rs
-    └── codex.rs
+    ├── codex.rs
+    └── service.rs
 assets/
 └── codex/
     ├── plugin.json
@@ -139,10 +143,18 @@ assets/
         └── longrun/
             └── SKILL.md
 tests/
+├── config.rs
 ├── cli.rs
 ├── hooks.rs
+├── install.rs
+├── mcp.rs
+├── performance.rs
+├── process_tree.rs
+├── protocol.rs
 ├── receipts.rs
 ├── runner.rs
+├── security.rs
+├── store.rs
 ├── supervisor.rs
 ├── recovery.rs
 ├── integration_codex.rs
@@ -151,6 +163,13 @@ tests/
 │   └── commands/
 └── live/
     └── README.md
+Formula/
+└── longrun.rb
+.github/
+└── workflows/
+    ├── ci.yml
+    └── release.yml
+install.sh
 ```
 
 **Structure Decision**: Use one package and one binary. Modules separate
@@ -186,10 +205,14 @@ promise in code-mode callers.
 
 ### Runtime authority
 
-The runner is the only component allowed to spawn requested commands. Embedded
-mode invokes it in the hook process. Durable mode invokes the same runner
-through the supervisor. An MCP interface, if enabled, calls supervisor
-operations only and cannot spawn commands independently.
+The internal `longrun internal worker JOB_ID` path is the only component
+allowed to spawn a requested command. Before spawn, the worker acquires the
+job's exclusive execution claim and records its identity. Embedded hooks and
+the durable supervisor both start and wait for this worker rather than spawning
+the requested command themselves. If a parent crashes in the spawn/persist
+window, a replacement worker cannot execute while the original claim is held.
+An MCP interface calls supervisor operations only and cannot spawn commands
+independently.
 
 ### Sandboxing and environment
 
@@ -234,8 +257,11 @@ per-user startup entry.
 
 Delivery order is original hook, `SessionStart`, then optional
 `codex exec resume`. Recovery requires an expired prior lease, a per-session
-lock, an undelivered result, and an unspent retry budget. Marking delivery and
-releasing ownership are atomic.
+lock, an undelivered result, and an unspent retry budget. Every attempt reuses a
+stable idempotency key. Because the current hook protocol has no acknowledgement
+after Codex consumes hook output, crash recovery provides effectively-once
+delivery: an uncertain retry may repeat the same envelope identity, but it
+cannot re-execute the job or start a second resume process.
 
 ### Codex integration distribution
 
@@ -251,6 +277,13 @@ Generated hooks contain the absolute executable path. Users must review and
 trust hooks in Codex. Repair is idempotent; uninstall calls
 `codex plugin remove`, removes only Longrun's marketplace and generated files,
 and leaves unrelated Codex configuration untouched.
+
+### Distribution
+
+Release automation builds signed or checksummed archives for macOS, Linux, and
+Windows. `install.sh` selects and verifies a release artifact; Homebrew uses the
+same checksums; `cargo install longrun` remains available for developers. The
+Codex plugin contains no platform binary and never installs the CLI.
 
 ## Complexity Tracking
 

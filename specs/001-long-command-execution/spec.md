@@ -98,16 +98,16 @@ and reach one terminal state.
 ### User Story 4 - Recover Completed Work Safely (Priority: P2)
 
 As a Codex user, I can choose durable execution so a command survives the
-originating Codex process, and its result is delivered once when the session is
-available again.
+originating Codex process, and its result is delivered effectively once when
+the session is available again.
 
 **Why this priority**: Commands lasting hours must not be lost when a terminal
 or Codex process closes, but recovery must never duplicate execution or result
 delivery.
 
 **Independent Test**: Start a durable job, terminate the originating Codex
-process, let the job complete, reopen the same session, and verify one recovery
-delivery with no second command execution.
+process, let the job complete, reopen the same session, and verify one stable
+recovery identity with no second command execution or duplicate resume process.
 
 **Acceptance Scenarios**:
 
@@ -116,7 +116,7 @@ delivery with no second command execution.
    supervisor.
 2. **Given** a durable job completed while its original delivery owner was
    unavailable, **When** the same session starts again, **Then** Longrun
-   delivers the result once.
+   delivers the result with a stable idempotency identity.
 3. **Given** an active delivery owner still holds the job, **When** another
    recovery path checks the same result, **Then** it does not compete for or
    duplicate delivery.
@@ -126,29 +126,33 @@ delivery with no second command execution.
 
 ---
 
-### User Story 5 - Install and Manage Codex Integration (Priority: P2)
+### User Story 5 - Install and Manage Longrun (Priority: P2)
 
-As a user, I can install, diagnose, repair, and uninstall Longrun's Codex
-integration after installing the Longrun CLI.
+As a user, I can install the Longrun CLI without first installing a Rust
+toolchain, then install, diagnose, repair, and uninstall its Codex integration.
 
 **Why this priority**: Integration must be reproducible and must not depend on a
 particular shell environment or silently install privileged services.
 
-**Independent Test**: Install the integration, start a new Codex session, verify
-that Longrun is discoverable and healthy, repair it after moving the executable,
-and uninstall it without removing unrelated Codex configuration.
+**Independent Test**: Install a verified platform binary on a machine without a
+Rust toolchain, install the integration, start a new Codex session, verify that
+Longrun is discoverable and healthy, repair it after moving the executable, and
+uninstall it without removing unrelated Codex configuration.
 
 **Acceptance Scenarios**:
 
-1. **Given** the Longrun CLI is installed, **When** a user initializes Codex
+1. **Given** a supported machine without a Rust toolchain, **When** a user
+   selects a published binary installation method, **Then** Longrun installs
+   from a verifiable platform artifact and checksum.
+2. **Given** the Longrun CLI is installed, **When** a user initializes Codex
    integration, **Then** the required plugin, skill, and lifecycle integration
    are installed using the actual executable location.
-2. **Given** Codex integration is installed, **When** the executable moves,
+3. **Given** Codex integration is installed, **When** the executable moves,
    **Then** repair updates Longrun-owned integration without rewriting unrelated
    user configuration.
-3. **Given** a user requests integration removal, **When** uninstall completes,
+4. **Given** a user requests integration removal, **When** uninstall completes,
    **Then** only Longrun-owned integration artifacts are removed.
-4. **Given** durable mode has never been explicitly enabled, **When** Codex
+5. **Given** durable mode has never been explicitly enabled, **When** Codex
    integration is installed, **Then** no operating-system background service is
    installed or started.
 
@@ -280,6 +284,10 @@ rejected without running with elevated permissions.
   supported platform behavior.
 - **FR-038**: Installation and removal MUST preserve unrelated user files and
   Codex configuration.
+- **FR-039**: Longrun MUST publish installable, checksummed binaries for every
+  supported platform so ordinary users do not need a Rust toolchain.
+- **FR-040**: Longrun MUST also support source installation through the standard
+  Rust package workflow for developers.
 
 ### Key Entities
 
@@ -320,8 +328,8 @@ rejected without running with elevated permissions.
 - **SC-006**: All forged, expired, mismatched, replayed, and consumed receipt
   tests result in zero command executions.
 - **SC-007**: A durable job survives termination of the originating Codex
-  process and is delivered exactly once after the same session becomes
-  available.
+  process; every recovery attempt uses one stable delivery idempotency identity,
+  starts at most one resume process, and never re-executes the job.
 - **SC-008**: Denied filesystem, network, secret, and elevated-permission tests
   complete without silent permission escalation.
 - **SC-009**: A new user with the CLI already installed can initialize and
@@ -332,6 +340,8 @@ rejected without running with elevated permissions.
   usable from a separate terminal while a durable job is running.
 - **SC-012**: Reinstall, repair, and uninstall tests leave all unrelated user
   configuration unchanged.
+- **SC-013**: A user on each supported platform can install a verified Longrun
+  binary and run `longrun doctor` without installing a Rust toolchain.
 
 ## Assumptions
 
