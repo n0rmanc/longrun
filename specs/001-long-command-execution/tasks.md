@@ -48,18 +48,18 @@ product-scope exclusions.
 
 **⚠️ CRITICAL**: User-story work starts only after this phase passes tests.
 
-- [ ] T008 [P] Add failing unit tests for lossless UTF-8, Unix-byte, and Windows-UTF-16 argument round trips in `tests/protocol.rs`
-- [ ] T009 [P] Add failing state-transition and terminal-state tests for execution and delivery models in `tests/store.rs`
-- [ ] T010 [P] Add failing configuration default, override, validation, and secret-pattern tests in `tests/config.rs`
-- [ ] T011 Implement versioned `NativeString`, job, result, delivery, and IPC domain types in `src/protocol.rs`
-- [ ] T012 Implement validated execution, output, environment, recovery, concurrency, and retention configuration in `src/config.rs`
-- [ ] T013 Implement SQLite WAL migrations and transaction helpers for pending submissions, jobs, executions, results, leases, and integrations in `src/store.rs`
-- [ ] T014 Implement atomic JSON specification/result writes and secure state-directory permissions in `src/store.rs`
-- [ ] T015 [P] Implement bounded byte-tail extraction, truncation metadata, hashes, and untrusted-output rendering in `src/output.rs`
-- [ ] T016 [P] Implement structured tracing with secret-safe fields and configurable diagnostics in `src/main.rs`
-- [ ] T017 Define CLI parsing for all commands in the CLI contract without business logic in `src/cli.rs`
-- [ ] T018 Wire async runtime, configuration loading, path resolution, command dispatch, and exit mapping in `src/main.rs`
-- [ ] T019 Run foundational unit tests and record review evidence in `specs/001-long-command-execution/implementation-log.md`
+- [X] T008 [P] Add failing unit tests for lossless UTF-8, Unix-byte, and Windows-UTF-16 argument round trips in `tests/protocol.rs`
+- [X] T009 [P] Add failing state-transition and terminal-state tests for execution and delivery models in `tests/store.rs`
+- [X] T010 [P] Add failing configuration default, override, validation, and secret-pattern tests in `tests/config.rs`
+- [X] T011 Implement versioned `NativeString`, job, result, delivery, and IPC domain types in `src/protocol.rs`
+- [X] T012 Implement validated execution, output, environment, recovery, concurrency, and retention configuration in `src/config.rs`
+- [X] T013 Implement SQLite WAL migrations and transaction helpers for pending submissions, jobs, executions, results, leases, and integrations in `src/store.rs`
+- [X] T014 Implement atomic JSON specification/result writes and secure state-directory permissions in `src/store.rs`
+- [X] T015 [P] Implement bounded byte-tail extraction, truncation metadata, hashes, and untrusted-output rendering in `src/output.rs`
+- [X] T016 [P] Implement structured tracing with secret-safe fields and configurable diagnostics in `src/main.rs`
+- [X] T017 Define CLI parsing for all commands in the CLI contract without business logic in `src/cli.rs`
+- [X] T018 Wire async runtime, configuration loading, path resolution, command dispatch, and exit mapping in `src/main.rs`
+- [X] T019 Run foundational unit tests and record review evidence in `specs/001-long-command-execution/implementation-log.md`
 
 **Checkpoint**: Domain, configuration, storage, output, and CLI parsing contracts
 are independently tested.
