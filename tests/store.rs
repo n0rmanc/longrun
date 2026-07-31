@@ -121,9 +121,37 @@ fn file_store_migrates_with_wal() {
     fs::create_dir_all(&root).expect("create state");
     let store = Store::open(root.join("state.sqlite")).expect("open store");
 
-    assert_eq!(store.schema_version().expect("schema version"), 2);
+    assert_eq!(store.schema_version().expect("schema version"), 3);
     assert_eq!(store.journal_mode().expect("journal mode"), "wal");
     fs::remove_dir_all(root).expect("remove test state");
+}
+
+#[test]
+fn version_two_delivery_rows_upgrade_to_leased_recovery_schema() {
+    let root = std::env::temp_dir().join(format!("longrun-v2-{}", Uuid::now_v7()));
+    fs::create_dir_all(&root).expect("root");
+    let database = root.join("state.sqlite");
+    let connection = rusqlite::Connection::open(&database).expect("legacy database");
+    connection
+        .execute_batch(
+            "CREATE TABLE deliveries (
+                job_id TEXT PRIMARY KEY,
+                state TEXT NOT NULL,
+                lease_id TEXT,
+                lease_expires_at_ms INTEGER,
+                idempotency_key TEXT
+             );
+             PRAGMA user_version = 2;",
+        )
+        .expect("legacy schema");
+    drop(connection);
+
+    let mut store = Store::open(&database).expect("migrate");
+    assert_eq!(store.schema_version().expect("schema version"), 3);
+    store
+        .create_job_for_session(&specification(), Some("session"))
+        .expect("current delivery insert");
+    fs::remove_dir_all(root).expect("cleanup");
 }
 
 #[test]

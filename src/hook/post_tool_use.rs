@@ -5,11 +5,14 @@ use crate::{
     error::{Error, Result},
     hook::{input::PostToolUseInput, output::PostToolUseOutput},
     paths::AppPaths,
+    protocol::DeliveryState,
     receipt::{ReceiptExpectation, ReceiptSigner},
     runner::Runner,
     store::Store,
     worker::run_worker_with_runner,
 };
+
+const ACTIVE_HOOK_LEASE_GRACE_MS: i64 = 5 * 60 * 1_000;
 
 pub async fn handle_post_tool_use(
     input: &PostToolUseInput,
@@ -46,12 +49,37 @@ pub async fn handle_post_tool_use(
     let payload = receipt.verify(&signer, &expected, now)?;
     let job = payload.to_job_specification()?;
     store.consume_pending_and_create_job(&input.tool_use_id, &payload.nonce, &job, now_ms)?;
+    let lease = store.claim_delivery(
+        job.job_id,
+        &input.common.session_id,
+        DeliveryState::HookLeased,
+        "post-tool-use",
+        now_ms,
+        active_hook_lease_ms(job.timeout_ms)?,
+        config.recovery.retry_budget,
+    )?;
     drop(store);
     let result = run_worker_with_runner(job.job_id, &database, config, paths, runner).await?;
+    let delivered_at_ms = OffsetDateTime::now_utc()
+        .unix_timestamp_nanos()
+        .div_euclid(1_000_000) as i64;
+    Store::open(&database)?.finish_delivery(
+        job.job_id,
+        lease.lease_id,
+        DeliveryState::DeliveredInTurn,
+        delivered_at_ms,
+    )?;
     Ok(Some(PostToolUseOutput::completed(bounded_result_context(
         &result,
         config.output.model_max_bytes,
     ))))
+}
+
+fn active_hook_lease_ms(timeout_ms: u64) -> Result<i64> {
+    let timeout_ms: i64 = timeout_ms
+        .try_into()
+        .map_err(|_| Error::InvalidInput("job timeout exceeds delivery lease range".into()))?;
+    Ok(timeout_ms.saturating_add(ACTIVE_HOOK_LEASE_GRACE_MS))
 }
 
 fn receipt_line(response: &serde_json::Value) -> Result<Option<&str>> {

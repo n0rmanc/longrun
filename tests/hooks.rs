@@ -41,8 +41,8 @@ async fn post_tool_use_consumes_a_receipt_waits_locally_and_rejects_replay() {
         hook::{input::PostToolUseInput, post_tool_use::handle_post_tool_use},
         paths::AppPaths,
         protocol::{
-            EnvironmentPolicy, ExecutionMode, JobSpecification, NativeEncoding, NativeString,
-            PendingState, PendingSubmission, ShellMode,
+            DeliveryState, EnvironmentPolicy, ExecutionMode, JobSpecification, NativeEncoding,
+            NativeString, PendingState, PendingSubmission, ShellMode,
         },
         receipt::{ReceiptPayload, ReceiptSigner},
         runner::Runner,
@@ -85,6 +85,7 @@ async fn post_tool_use_consumes_a_receipt_waits_locally_and_rejects_replay() {
         created_at_ms: 1,
         command_hash: "sha256:test".into(),
     };
+    let job_id = job.job_id;
     let pending = PendingSubmission {
         session_id: "session".into(),
         turn_id: "turn".into(),
@@ -146,6 +147,14 @@ async fn post_tool_use_consumes_a_receipt_waits_locally_and_rejects_replay() {
             .hook_specific_output
             .additional_context
             .contains("Job ID:")
+    );
+    assert_eq!(
+        longrun::store::Store::open(&database)
+            .expect("reopen store")
+            .status(job_id)
+            .expect("status")
+            .delivery_state,
+        DeliveryState::DeliveredInTurn
     );
     assert!(
         handle_post_tool_use(&input, &paths, &Config::default(), &Runner::new())

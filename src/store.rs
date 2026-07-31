@@ -4,7 +4,7 @@ use std::{
     path::Path,
 };
 
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde::Serialize;
 use uuid::Uuid;
 
@@ -25,6 +25,16 @@ pub struct JobStatus {
     pub execution_state: ExecutionState,
     pub delivery_state: DeliveryState,
     pub result: Option<JobResult>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeliveryLease {
+    pub job_id: Uuid,
+    pub lease_id: Uuid,
+    pub session_id: String,
+    pub state: DeliveryState,
+    pub expires_at_ms: i64,
+    pub idempotency_key: String,
 }
 
 impl Store {
@@ -85,14 +95,22 @@ impl Store {
              );
              CREATE TABLE IF NOT EXISTS deliveries (
                 job_id TEXT PRIMARY KEY REFERENCES jobs(job_id) ON DELETE CASCADE,
+                session_id TEXT,
                 state TEXT NOT NULL,
                 lease_id TEXT,
+                lease_owner TEXT,
                 lease_expires_at_ms INTEGER,
-                idempotency_key TEXT
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                idempotency_key TEXT NOT NULL
              );
              CREATE TABLE IF NOT EXISTS leases (
                 lease_id TEXT PRIMARY KEY,
                 job_id TEXT NOT NULL REFERENCES jobs(job_id) ON DELETE CASCADE,
+                owner TEXT NOT NULL,
+                expires_at_ms INTEGER NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS session_locks (
+                session_id TEXT PRIMARY KEY,
                 owner TEXT NOT NULL,
                 expires_at_ms INTEGER NOT NULL
              );
@@ -102,7 +120,9 @@ impl Store {
                 updated_at_ms INTEGER NOT NULL
              );",
         )?;
-        let version: i64 = transaction.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        let mut version: i64 =
+            transaction.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        let fresh_schema = version == 0;
         if version < 2 {
             if version == 1 {
                 transaction.execute_batch(
@@ -110,7 +130,26 @@ impl Store {
                      ALTER TABLE executions ADD COLUMN cancel_grace_ms INTEGER;",
                 )?;
             }
-            transaction.pragma_update(None, "user_version", 2)?;
+            version = 2;
+        }
+        if version < 3 {
+            if !fresh_schema {
+                transaction.execute_batch(
+                    "ALTER TABLE deliveries ADD COLUMN session_id TEXT;
+                     ALTER TABLE deliveries ADD COLUMN lease_owner TEXT;
+                     ALTER TABLE deliveries ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0;",
+                )?;
+            }
+            version = 3;
+        }
+        transaction.execute(
+            "UPDATE deliveries
+             SET idempotency_key = lower(hex(randomblob(16)))
+             WHERE idempotency_key IS NULL",
+            [],
+        )?;
+        if version > 0 {
+            transaction.pragma_update(None, "user_version", version)?;
         }
         transaction.commit()?;
         Ok(())
@@ -129,6 +168,14 @@ impl Store {
     }
 
     pub fn create_job(&mut self, specification: &JobSpecification) -> Result<()> {
+        self.create_job_for_session(specification, None)
+    }
+
+    pub fn create_job_for_session(
+        &mut self,
+        specification: &JobSpecification,
+        session_id: Option<&str>,
+    ) -> Result<()> {
         if specification.protocol_version != crate::protocol::PROTOCOL_VERSION {
             return Err(Error::InvalidInput(
                 "unsupported job protocol version".into(),
@@ -147,8 +194,14 @@ impl Store {
             params![job_id, ExecutionState::Accepted.as_str()],
         )?;
         transaction.execute(
-            "INSERT INTO deliveries (job_id, state) VALUES (?1, ?2)",
-            params![job_id, DeliveryState::Undelivered.as_str()],
+            "INSERT INTO deliveries (job_id, session_id, state, idempotency_key)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![
+                job_id,
+                session_id,
+                DeliveryState::Undelivered.as_str(),
+                Uuid::now_v7().to_string(),
+            ],
         )?;
         transaction.commit()?;
         Ok(())
@@ -281,8 +334,14 @@ impl Store {
             params![job.job_id.to_string(), ExecutionState::Accepted.as_str()],
         )?;
         transaction.execute(
-            "INSERT INTO deliveries (job_id, state) VALUES (?1, ?2)",
-            params![job.job_id.to_string(), DeliveryState::Undelivered.as_str()],
+            "INSERT INTO deliveries (job_id, session_id, state, idempotency_key)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![
+                job.job_id.to_string(),
+                &pending.session_id,
+                DeliveryState::Undelivered.as_str(),
+                Uuid::now_v7().to_string(),
+            ],
         )?;
         pending.state = PendingState::Consumed;
         transaction.execute(
@@ -599,6 +658,185 @@ impl Store {
         Ok(())
     }
 
+    pub fn expire_delivery_leases(&mut self, now_ms: i64) -> Result<usize> {
+        let transaction = self.connection.transaction()?;
+        let expired = expire_delivery_leases(&transaction, now_ms)?;
+        transaction.commit()?;
+        Ok(expired)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn claim_delivery(
+        &mut self,
+        job_id: Uuid,
+        session_id: &str,
+        state: DeliveryState,
+        owner: &str,
+        now_ms: i64,
+        lease_ms: i64,
+        retry_budget: u32,
+    ) -> Result<DeliveryLease> {
+        if !is_lease_state(state) {
+            return Err(Error::InvalidInput(
+                "delivery claim requires a leased state".into(),
+            ));
+        }
+        if lease_ms <= 0 {
+            return Err(Error::InvalidInput(
+                "delivery lease duration must be positive".into(),
+            ));
+        }
+        let expires_at_ms = now_ms
+            .checked_add(lease_ms)
+            .ok_or_else(|| Error::InvalidInput("delivery lease expiry is out of range".into()))?;
+        let transaction = self.connection.transaction()?;
+        expire_delivery_leases(&transaction, now_ms)?;
+        let (stored_session, stored_state, attempts, idempotency_key, has_result): (
+            Option<String>,
+            String,
+            i64,
+            String,
+            bool,
+        ) = transaction.query_row(
+            "SELECT session_id, state, attempt_count, idempotency_key,
+                    EXISTS(SELECT 1 FROM results WHERE results.job_id = deliveries.job_id)
+             FROM deliveries WHERE job_id = ?1",
+            [job_id.to_string()],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )?;
+        if stored_session.as_deref() != Some(session_id) {
+            return Err(Error::Denied(
+                "delivery target does not match the requested session".into(),
+            ));
+        }
+        if stored_state.parse::<DeliveryState>()? != DeliveryState::Undelivered {
+            return Err(Error::Denied(
+                "delivery is already owned or complete".into(),
+            ));
+        }
+        if state != DeliveryState::HookLeased && !has_result {
+            return Err(Error::Denied(
+                "recovery delivery requires a completed job result".into(),
+            ));
+        }
+        let attempts: u32 = attempts
+            .try_into()
+            .map_err(|_| Error::InvalidInput("invalid delivery attempt count".into()))?;
+        if state == DeliveryState::ResumeLeased && attempts >= retry_budget {
+            return Err(Error::Denied("resume retry budget is exhausted".into()));
+        }
+
+        let lease_id = Uuid::now_v7();
+        if needs_session_lock(state)
+            && transaction.execute(
+                "INSERT INTO session_locks (session_id, owner, expires_at_ms)
+                 VALUES (?1, ?2, ?3) ON CONFLICT(session_id) DO NOTHING",
+                params![session_id, lease_id.to_string(), expires_at_ms],
+            )? != 1
+        {
+            return Err(Error::Denied(
+                "session recovery is already owned by another delivery".into(),
+            ));
+        }
+        let next_attempts = attempts
+            .checked_add(u32::from(state == DeliveryState::ResumeLeased))
+            .ok_or_else(|| Error::InvalidInput("delivery attempt count is out of range".into()))?;
+        let changed = transaction.execute(
+            "UPDATE deliveries
+             SET state = ?1, lease_id = ?2, lease_owner = ?3, lease_expires_at_ms = ?4,
+                 attempt_count = ?5
+             WHERE job_id = ?6 AND state = 'undelivered'",
+            params![
+                state.as_str(),
+                lease_id.to_string(),
+                owner,
+                expires_at_ms,
+                next_attempts as i64,
+                job_id.to_string(),
+            ],
+        )?;
+        if changed != 1 {
+            return Err(Error::Denied("delivery could not be claimed".into()));
+        }
+        transaction.execute(
+            "INSERT INTO leases (lease_id, job_id, owner, expires_at_ms)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![
+                lease_id.to_string(),
+                job_id.to_string(),
+                owner,
+                expires_at_ms
+            ],
+        )?;
+        transaction.commit()?;
+        Ok(DeliveryLease {
+            job_id,
+            lease_id,
+            session_id: session_id.into(),
+            state,
+            expires_at_ms,
+            idempotency_key,
+        })
+    }
+
+    pub fn finish_delivery(
+        &mut self,
+        job_id: Uuid,
+        lease_id: Uuid,
+        next: DeliveryState,
+        now_ms: i64,
+    ) -> Result<()> {
+        let transaction = self.connection.transaction()?;
+        expire_delivery_leases(&transaction, now_ms)?;
+        let (current, stored_lease, session_id): (String, Option<String>, Option<String>) =
+            transaction.query_row(
+                "SELECT state, lease_id, session_id FROM deliveries WHERE job_id = ?1",
+                [job_id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )?;
+        let current: DeliveryState = current.parse()?;
+        if stored_lease.as_deref() != Some(&lease_id.to_string())
+            || !matches!(
+                (current, next),
+                (DeliveryState::HookLeased, DeliveryState::DeliveredInTurn)
+                    | (
+                        DeliveryState::SessionStartLeased,
+                        DeliveryState::DeliveredOnStart
+                    )
+            )
+        {
+            return Err(Error::Denied(
+                "delivery lease cannot mark this result delivered".into(),
+            ));
+        }
+        transaction.execute(
+            "UPDATE deliveries
+             SET state = ?1, lease_id = NULL, lease_owner = NULL, lease_expires_at_ms = NULL
+             WHERE job_id = ?2 AND lease_id = ?3",
+            params![next.as_str(), job_id.to_string(), lease_id.to_string()],
+        )?;
+        transaction.execute(
+            "DELETE FROM leases WHERE lease_id = ?1",
+            [lease_id.to_string()],
+        )?;
+        if let Some(session_id) = session_id {
+            transaction.execute(
+                "DELETE FROM session_locks WHERE session_id = ?1 AND owner = ?2",
+                params![session_id, lease_id.to_string()],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
     pub fn write_immutable_json<T: Serialize>(&self, path: &Path, value: &T) -> Result<()> {
         let parent = path.parent().ok_or_else(|| {
             Error::InvalidInput("JSON destination has no parent directory".into())
@@ -627,6 +865,36 @@ impl Store {
         fs::remove_file(temporary)?;
         Ok(())
     }
+}
+
+fn expire_delivery_leases(transaction: &Transaction<'_>, now_ms: i64) -> Result<usize> {
+    let expired = transaction.execute(
+        "UPDATE deliveries
+         SET state = 'undelivered', lease_id = NULL, lease_owner = NULL, lease_expires_at_ms = NULL
+         WHERE state IN ('hook_leased', 'session_start_leased', 'resume_leased')
+           AND lease_expires_at_ms <= ?1",
+        [now_ms],
+    )?;
+    transaction.execute("DELETE FROM leases WHERE expires_at_ms <= ?1", [now_ms])?;
+    transaction.execute(
+        "DELETE FROM session_locks WHERE expires_at_ms <= ?1",
+        [now_ms],
+    )?;
+    Ok(expired)
+}
+
+const fn is_lease_state(state: DeliveryState) -> bool {
+    matches!(
+        state,
+        DeliveryState::HookLeased | DeliveryState::SessionStartLeased | DeliveryState::ResumeLeased
+    )
+}
+
+const fn needs_session_lock(state: DeliveryState) -> bool {
+    matches!(
+        state,
+        DeliveryState::SessionStartLeased | DeliveryState::ResumeLeased
+    )
 }
 
 fn result_log_bytes(result: &JobResult) -> Result<u64> {

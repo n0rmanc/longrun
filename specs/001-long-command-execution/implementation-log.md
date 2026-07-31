@@ -250,3 +250,21 @@ commits required by the constitution.
 - Review: framing is transport-only and cannot spawn commands; it caps
   allocation before reading a payload. Supervisor ownership and dispatch are
   intentionally still pending, so no CLI or MCP path can bypass the worker.
+
+## Delivery Lease Foundation
+
+- 2026-07-31: migrated delivery state to schema version 3 with target session,
+  lease owner/expiry, retry counter, durable idempotency key, and per-session
+  recovery lock. Active PostToolUse now claims a timeout-bounded hook lease
+  before worker execution and marks the result `delivered_in_turn` only after
+  the owned worker has persisted a terminal result.
+- Focused checks: migration coverage upgrades a version-2 delivery table;
+  recovery tests cover exclusive SessionStart ownership, lease expiry, stable
+  delivery identity, resume retry budget, and duplicate resume rejection. Hook
+  tests assert successful active completion reaches
+  `delivered_in_turn`; the isolated live hook harness also passed with a
+  one-second command after the lease path was added.
+- Review: expiry clears both delivery and session ownership atomically before
+  another claimant can proceed. A lease cannot authorize command execution;
+  the existing worker claim remains the sole spawn authority. Supervisor
+  restart handling and SessionStart output wiring remain pending.

@@ -200,7 +200,7 @@ restart the session, and observe exactly one recovery delivery.
 
 - [X] T061 [P] [US4] Add failing framed IPC request, response, event, version, and malformed-frame tests in `tests/supervisor.rs`
 - [X] T062 [P] [US4] Add failing Unix socket and Windows named-pipe transport tests in `tests/supervisor.rs`
-- [ ] T063 [P] [US4] Add failing delivery-lease, expiry, stable-idempotency, per-session lock, retry-budget, and duplicate-resume tests in `tests/recovery.rs`
+- [X] T063 [P] [US4] Add failing delivery-lease, expiry, stable-idempotency, per-session lock, retry-budget, and duplicate-resume tests in `tests/recovery.rs`
 - [ ] T064 [P] [US4] Add failing supervisor restart and completed-before-persist recovery tests in `tests/recovery.rs`
 - [ ] T065 [P] [US4] Add a durable Codex termination/restart live harness in `tests/live/durable_session.rs`
 
@@ -211,7 +211,7 @@ restart the session, and observe exactly one recovery delivery.
 - [X] T068 [US4] Implement per-user Windows named-pipe server and client transport in `src/ipc/windows.rs`
 - [ ] T069 [US4] Implement durable supervisor ownership, concurrency limits, completion events, and health in `src/supervisor.rs`
 - [ ] T070 [US4] Implement durable submit, wait, status, logs, cancel, and gc routing through the shared runtime in `src/supervisor.rs`
-- [ ] T071 [US4] Implement delivery leases, lease expiry, session locks, attempt budgets, and atomic delivery marking in `src/store.rs`
+- [X] T071 [US4] Implement delivery leases, lease expiry, session locks, attempt budgets, and atomic delivery marking in `src/store.rs`
 - [ ] T072 [US4] Implement ordered active-hook then SessionStart recovery with stable idempotency envelopes in `src/hook/session_start.rs`
 - [ ] T073 [US4] Implement disabled-by-default guarded `codex exec resume` recovery in `src/supervisor.rs`
 - [ ] T074 [US4] Implement launchd, systemd-user, and Windows per-user service artifact generation in `src/integration/service.rs`
