@@ -280,6 +280,7 @@ pub async fn dispatch(cli: Cli, paths: &AppPaths, config: &Config) -> Result<Exi
         Command::Status(arguments) => status(arguments, paths),
         Command::List(arguments) => list(arguments, paths),
         Command::Logs(arguments) => logs(arguments, paths).await,
+        Command::Cancel(arguments) => cancel(arguments, paths, config),
         command => Err(Error::Unavailable(format!(
             "`longrun {}` is not available until the runtime is initialized",
             command.name()
@@ -353,6 +354,35 @@ async fn logs(arguments: LogsArgs, paths: &AppPaths) -> Result<ExitCode> {
         }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
+}
+
+fn cancel(arguments: CancelArgs, paths: &AppPaths, config: &Config) -> Result<ExitCode> {
+    let grace_ms = arguments
+        .grace
+        .as_deref()
+        .map(parse_duration_ms)
+        .transpose()?
+        .unwrap_or(config.execution.termination_grace_ms);
+    let requested = Store::open(paths.state_dir.join("longrun.sqlite"))?.request_cancellation(
+        arguments.job_id,
+        grace_ms,
+        now_ms()?,
+    )?;
+    if arguments.json {
+        serde_json::to_writer(
+            std::io::stdout(),
+            &serde_json::json!({
+                "job_id": arguments.job_id,
+                "cancellation_requested": requested,
+            }),
+        )?;
+        std::io::stdout().write_all(b"\n")?;
+    } else if requested {
+        println!("Cancellation requested for {}", arguments.job_id);
+    } else {
+        println!("Job {} is already terminal or cancelling", arguments.job_id);
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 fn write_status(status: &crate::store::JobStatus, json: bool) -> Result<()> {

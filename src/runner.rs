@@ -14,6 +14,7 @@ use crate::{
     paths::AppPaths,
     platform,
     protocol::{ExecutionState, JobResult, JobSpecification, NativeString, ShellMode},
+    store::Store,
 };
 
 pub struct Runner {
@@ -38,6 +39,17 @@ impl Runner {
         job: &JobSpecification,
         config: &Config,
         paths: &AppPaths,
+    ) -> Result<JobResult> {
+        self.execute_with_cancellation(job, config, paths, None)
+            .await
+    }
+
+    pub async fn execute_with_cancellation(
+        &self,
+        job: &JobSpecification,
+        config: &Config,
+        paths: &AppPaths,
+        cancellation_database: Option<&std::path::Path>,
     ) -> Result<JobResult> {
         if !config.permits_permission_profile(&job.permission_profile) {
             return Err(Error::Denied(
@@ -92,14 +104,23 @@ impl Runner {
         let stderr_task = tokio::spawn(copy_stream(stderr, stderr_path.clone()));
         let timeout = sleep(Duration::from_millis(job.timeout_ms));
         tokio::pin!(timeout);
-        let (state, exit_code) = tokio::select! {
-            status = child.wait() => {
-                let status = status?;
-                (if status.success() { ExecutionState::Succeeded } else { ExecutionState::Failed }, status.code())
-            }
-            _ = &mut timeout => {
-                let _ = platform::terminate(&mut child, &process_tree, config.execution.termination_grace_ms).await?;
-                (ExecutionState::TimedOut, None)
+        let (state, exit_code) = loop {
+            tokio::select! {
+                status = child.wait() => {
+                    let status = status?;
+                    break (if status.success() { ExecutionState::Succeeded } else { ExecutionState::Failed }, status.code());
+                }
+                _ = &mut timeout => {
+                    let _ = platform::terminate(&mut child, &process_tree, config.execution.termination_grace_ms).await?;
+                    break (ExecutionState::TimedOut, None);
+                }
+                _ = sleep(Duration::from_millis(50)), if cancellation_database.is_some() => {
+                    let database = cancellation_database.expect("cancellation database is checked");
+                    if let Some(grace_ms) = Store::open(database)?.cancellation_grace(job.job_id)? {
+                        let _ = platform::terminate(&mut child, &process_tree, grace_ms).await?;
+                        break (ExecutionState::Cancelled, None);
+                    }
+                }
             }
         };
         stdout_task

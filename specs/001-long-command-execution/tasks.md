@@ -179,7 +179,7 @@ every job operation.
 
 - [ ] T055 [US3] Implement wait, status, and newest-first filtered list queries in `src/store.rs`
 - [ ] T056 [US3] Implement byte-safe log reads and local follow behavior in `src/output.rs`
-- [ ] T057 [US3] Implement idempotent cancellation state and owner notification in `src/runner.rs`
+- [X] T057 [US3] Implement idempotent cancellation state and owner notification in `src/runner.rs`
 - [ ] T058 [US3] Implement age and total-log-byte retention selection that excludes active, leased, and undelivered jobs in `src/store.rs`
 - [ ] T059 [US3] Wire `wait`, `status`, `list`, `logs`, `cancel`, and `gc` command output in `src/cli.rs`
 - [ ] T060 [US3] Run two-terminal job-control validation, review the diff, and record evidence in `specs/001-long-command-execution/implementation-log.md`

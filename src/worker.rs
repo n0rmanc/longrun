@@ -25,7 +25,9 @@ pub async fn run_worker_with_runner(
     let claim = Uuid::now_v7().to_string();
     let job = store.claim_execution(job_id, &claim)?;
     store.mark_running(job_id, &claim)?;
-    let result = runner.execute(&job, config, paths).await?;
+    let result = runner
+        .execute_with_cancellation(&job, config, paths, Some(database))
+        .await?;
     store.finish_execution(&result, &claim)?;
     Ok(result)
 }

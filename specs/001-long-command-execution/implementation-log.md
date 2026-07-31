@@ -165,3 +165,18 @@ commits required by the constitution.
   the pending submission's original expiry instead of extending it.
 - Review: PostToolUse rechecks expiry inside its transaction boundary, so an
   expired claimed submission cannot create a job even if it was read earlier.
+
+## Local Cancellation Ownership
+
+- 2026-07-31: added an idempotent persistent cancellation request to the
+  execution record. The active worker checks that local request and sends its
+  owned child through the same platform process-tree cleanup path used by
+  timeouts.
+- Focused checks: a worker starts a ten-second sandboxed command, observes a
+  second connection's cancellation request, persists `cancelled`, and exits
+  without leaving the command running.
+- Live check: an isolated `longrun run --json -- /bin/sh -c 'sleep 10'`
+  was discovered from `longrun list --json`, cancelled from a second terminal,
+  returned exit 130, and reported `execution_state: cancelled`.
+- Review: callers do not receive or act on child PIDs; only the owning runner
+  consumes cancellation state, preserving a single tree-cleanup authority.

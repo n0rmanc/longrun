@@ -78,9 +78,41 @@ fn file_store_migrates_with_wal() {
     fs::create_dir_all(&root).expect("create state");
     let store = Store::open(root.join("state.sqlite")).expect("open store");
 
-    assert_eq!(store.schema_version().expect("schema version"), 1);
+    assert_eq!(store.schema_version().expect("schema version"), 2);
     assert_eq!(store.journal_mode().expect("journal mode"), "wal");
     fs::remove_dir_all(root).expect("remove test state");
+}
+
+#[test]
+fn running_jobs_accept_one_idempotent_cancellation_request() {
+    let mut store = Store::open_in_memory().expect("store");
+    let job = specification();
+    store.create_job(&job).expect("job");
+    store
+        .transition_execution(job.job_id, ExecutionState::Starting)
+        .expect("starting");
+    store
+        .transition_execution(job.job_id, ExecutionState::Running)
+        .expect("running");
+
+    assert!(
+        store
+            .request_cancellation(job.job_id, 25, 1)
+            .expect("request cancellation")
+    );
+    assert_eq!(
+        store.cancellation_grace(job.job_id).expect("grace"),
+        Some(25)
+    );
+    assert!(
+        !store
+            .request_cancellation(job.job_id, 100, 2)
+            .expect("repeat cancellation")
+    );
+    assert_eq!(
+        store.cancellation_grace(job.job_id).expect("same grace"),
+        Some(25)
+    );
 }
 
 #[test]

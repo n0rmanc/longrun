@@ -74,7 +74,9 @@ impl Store {
                 worker_id TEXT,
                 pid INTEGER,
                 started_at_ms INTEGER,
-                finished_at_ms INTEGER
+                finished_at_ms INTEGER,
+                cancel_requested_at_ms INTEGER,
+                cancel_grace_ms INTEGER
              );
              CREATE TABLE IF NOT EXISTS results (
                 job_id TEXT PRIMARY KEY REFERENCES jobs(job_id) ON DELETE CASCADE,
@@ -98,9 +100,18 @@ impl Store {
                 integration TEXT PRIMARY KEY,
                 manifest_json TEXT NOT NULL,
                 updated_at_ms INTEGER NOT NULL
-             );
-             PRAGMA user_version = 1;",
+             );",
         )?;
+        let version: i64 = transaction.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        if version < 2 {
+            if version == 1 {
+                transaction.execute_batch(
+                    "ALTER TABLE executions ADD COLUMN cancel_requested_at_ms INTEGER;
+                     ALTER TABLE executions ADD COLUMN cancel_grace_ms INTEGER;",
+                )?;
+            }
+            transaction.pragma_update(None, "user_version", 2)?;
+        }
         transaction.commit()?;
         Ok(())
     }
@@ -334,6 +345,50 @@ impl Store {
             return Err(Error::Denied("execution claim is not active".into()));
         }
         Ok(())
+    }
+
+    pub fn request_cancellation(
+        &mut self,
+        job_id: Uuid,
+        grace_ms: u64,
+        now_ms: i64,
+    ) -> Result<bool> {
+        let job_id = job_id.to_string();
+        let state: String = self.connection.query_row(
+            "SELECT state FROM executions WHERE job_id = ?1",
+            [job_id.as_str()],
+            |row| row.get(0),
+        )?;
+        let state: ExecutionState = state.parse()?;
+        if state.is_terminal() {
+            return Ok(false);
+        }
+        let changed = self.connection.execute(
+            "UPDATE executions
+             SET cancel_requested_at_ms = ?1, cancel_grace_ms = ?2
+             WHERE job_id = ?3
+               AND state IN ('starting', 'running')
+               AND cancel_requested_at_ms IS NULL",
+            params![now_ms, grace_ms as i64, job_id],
+        )?;
+        Ok(changed == 1)
+    }
+
+    pub fn cancellation_grace(&self, job_id: Uuid) -> Result<Option<u64>> {
+        self.connection
+            .query_row(
+                "SELECT cancel_grace_ms FROM executions
+                 WHERE job_id = ?1 AND cancel_requested_at_ms IS NOT NULL",
+                [job_id.to_string()],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?
+            .map(|grace| {
+                grace
+                    .try_into()
+                    .map_err(|_| Error::InvalidInput("invalid stored cancellation grace".into()))
+            })
+            .transpose()
     }
 
     pub fn finish_execution(&mut self, result: &JobResult, claim: &str) -> Result<()> {
