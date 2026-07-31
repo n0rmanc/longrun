@@ -202,7 +202,7 @@ restart the session, and observe exactly one recovery delivery.
 - [X] T062 [P] [US4] Add failing Unix socket and Windows named-pipe transport tests in `tests/supervisor.rs`
 - [X] T063 [P] [US4] Add failing delivery-lease, expiry, stable-idempotency, per-session lock, retry-budget, and duplicate-resume tests in `tests/recovery.rs`
 - [X] T064 [P] [US4] Add failing supervisor restart and completed-before-persist recovery tests in `tests/recovery.rs`
-- [ ] T065 [P] [US4] Add a durable Codex termination/restart live harness in `tests/live/durable_session.rs`
+- [X] T065 [P] [US4] Add a durable Codex termination/restart live harness in `tests/live/durable_session.rs`
 
 ### Implementation for User Story 4
 

@@ -417,3 +417,24 @@ commits required by the constitution.
   cancellation only. The supervisor still spawns only hidden
   `longrun internal worker` processes; the worker/runner remains the sole
   requested-command execution authority.
+
+## Durable Codex Termination and Restart Harness
+
+- 2026-07-31: added the ignored `durable_session` live harness, run with
+  `LONGRUN_DURABLE_SESSION_SECONDS=90 cargo test --test durable_session --
+  --ignored`. It invokes the real PreToolUse rewrite, executes the generated
+  receipt command, starts a real PostToolUse process, and terminates that
+  originating process only after the durable worker has started.
+- The harness waits for the supervisor-owned worker to persist its result,
+  expires the terminated origin's delivery lease to model the elapsed recovery
+  safety window, and runs the real SessionStart CLI twice. It proves one
+  recovered result, one command start, one sandbox invocation, and no automatic
+  `codex exec resume` while the default remains disabled.
+- Live check: `LONGRUN_DURABLE_SESSION_SECONDS=1 cargo test --locked --test
+  durable_session -- --ignored --nocapture` passed in 2.13 seconds. The
+  harness uses a short isolated `TMPDIR` because Unix socket fallback paths
+  must remain below the platform socket-path limit.
+- Review: terminating the hook cannot reassign requested-command authority;
+  the supervisor and its worker continue independently. Recovery happens only
+  after the test explicitly expires the old lease, preserving the required
+  no-race delivery ordering.
