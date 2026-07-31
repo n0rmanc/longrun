@@ -38,3 +38,15 @@ commits required by the constitution.
   from OS entropy, stored only as a hash, consumed transactionally, and the
   submit stdout contains exactly one receipt line. PostToolUse waiting remains
   gated on the shared sandbox worker rather than adding a second spawn path.
+
+## Shared Sandbox Runner Base
+
+- 2026-07-31: added the single Tokio runner that constructs `codex sandbox -P
+  PROFILE -C CWD -- PROGRAM ARG...`, clears inherited environment, preserves
+  separate full logs, bounds result tails, and returns the child exit state.
+- Focused check: a fake sandbox executable verified exact command invocation,
+  separate stdout/stderr logs, and child exit status; `cargo clippy
+  --all-targets -- -D warnings` passed.
+- Review: no CLI or hook path invokes the requested program directly. The
+  internal worker will own claims and result persistence before any user-facing
+  execution route is enabled.

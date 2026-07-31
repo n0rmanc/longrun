@@ -8,4 +8,5 @@ pub mod output;
 pub mod paths;
 pub mod protocol;
 pub mod receipt;
+pub mod runner;
 pub mod store;
