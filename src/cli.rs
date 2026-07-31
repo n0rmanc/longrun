@@ -19,7 +19,7 @@ use crate::{
         session_start::handle_session_start,
     },
     integration::service as service_manager,
-    output::read_log,
+    output::read_log_chunk,
     paths::AppPaths,
     protocol::{
         EnvironmentPolicy, ExecutionMode, JobSpecification, NativeString, ShellMode, sha256_hex,
@@ -291,11 +291,11 @@ pub async fn dispatch(
         Command::RunShell(arguments) => run_shell(arguments, paths, config).await,
         Command::Internal(arguments) => internal(arguments, paths, config).await,
         Command::Wait(arguments) => wait(arguments, paths).await,
-        Command::Status(arguments) => status(arguments, paths),
-        Command::List(arguments) => list(arguments, paths),
+        Command::Status(arguments) => status(arguments, paths).await,
+        Command::List(arguments) => list(arguments, paths).await,
         Command::Logs(arguments) => logs(arguments, paths).await,
-        Command::Cancel(arguments) => cancel(arguments, paths, config),
-        Command::Gc(arguments) => gc(arguments, paths, config),
+        Command::Cancel(arguments) => cancel(arguments, paths, config).await,
+        Command::Gc(arguments) => gc(arguments, paths, config).await,
         Command::Daemon(arguments) => daemon(arguments, paths, config, config_path).await,
         Command::Service(arguments) => service_command(arguments, paths, config_path),
         command => Err(Error::Unavailable(format!(
@@ -305,15 +305,27 @@ pub async fn dispatch(
     }
 }
 
-fn status(arguments: JobArgs, paths: &AppPaths) -> Result<ExitCode> {
-    let status = Store::open(paths.state_dir.join("longrun.sqlite"))?.status(arguments.job_id)?;
+async fn status(arguments: JobArgs, paths: &AppPaths) -> Result<ExitCode> {
+    let status = match supervisor::status(paths, arguments.job_id).await {
+        Ok(status) => status,
+        Err(error) if supervisor_offline(&error) => {
+            Store::open(paths.state_dir.join("longrun.sqlite"))?.status(arguments.job_id)?
+        }
+        Err(error) => return Err(error),
+    };
     write_status(&status, arguments.json)?;
     Ok(ExitCode::SUCCESS)
 }
 
-fn list(arguments: ListArgs, paths: &AppPaths) -> Result<ExitCode> {
+async fn list(arguments: ListArgs, paths: &AppPaths) -> Result<ExitCode> {
     let state = arguments.state.as_deref().map(str::parse).transpose()?;
-    let jobs = Store::open(paths.state_dir.join("longrun.sqlite"))?.list(state)?;
+    let jobs = match supervisor::list(paths, state).await {
+        Ok(jobs) => jobs,
+        Err(error) if supervisor_offline(&error) => {
+            Store::open(paths.state_dir.join("longrun.sqlite"))?.list(state)?
+        }
+        Err(error) => return Err(error),
+    };
     if arguments.json {
         serde_json::to_writer(std::io::stdout(), &jobs)?;
         std::io::stdout().write_all(b"\n")?;
@@ -331,6 +343,17 @@ fn list(arguments: ListArgs, paths: &AppPaths) -> Result<ExitCode> {
 }
 
 async fn wait(arguments: JobArgs, paths: &AppPaths) -> Result<ExitCode> {
+    match supervisor::wait(paths, arguments.job_id).await {
+        Ok(status) => {
+            write_status(&status, arguments.json)?;
+            return Ok(status
+                .result
+                .as_ref()
+                .map_or(ExitCode::from(70), result_exit_code));
+        }
+        Err(error) if !supervisor_offline(&error) => return Err(error),
+        Err(_) => {}
+    }
     loop {
         let status =
             Store::open(paths.state_dir.join("longrun.sqlite"))?.status(arguments.job_id)?;
@@ -350,37 +373,46 @@ async fn logs(arguments: LogsArgs, paths: &AppPaths) -> Result<ExitCode> {
     let path = paths
         .log_dir
         .join(format!("{}.{}.log", arguments.job_id, suffix));
-    let mut offset = 0usize;
+    let mut offset = 0_u64;
     loop {
-        let bytes = read_log(&path).await?;
-        if bytes.len() > offset {
-            std::io::stdout().write_all(&bytes[offset..])?;
-            offset = bytes.len();
-        }
-        if !arguments.follow
-            || Store::open(paths.state_dir.join("longrun.sqlite"))?
-                .status(arguments.job_id)?
-                .execution_state
-                .is_terminal()
-        {
+        let (bytes, next_offset, at_end, terminal) =
+            match supervisor::logs(paths, arguments.job_id, arguments.stderr, offset).await {
+                Ok(chunk) => (chunk.bytes, chunk.next_offset, chunk.at_end, chunk.terminal),
+                Err(error) if supervisor_offline(&error) => {
+                    let chunk = read_log_chunk(&path, offset, 64 * 1024).await?;
+                    let terminal = Store::open(paths.state_dir.join("longrun.sqlite"))?
+                        .status(arguments.job_id)?
+                        .execution_state
+                        .is_terminal()
+                        && chunk.at_end;
+                    (chunk.bytes, chunk.next_offset, chunk.at_end, terminal)
+                }
+                Err(error) => return Err(error),
+            };
+        std::io::stdout().write_all(&bytes)?;
+        offset = next_offset;
+        if (!arguments.follow && at_end) || terminal {
             return Ok(ExitCode::SUCCESS);
         }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
 }
 
-fn cancel(arguments: CancelArgs, paths: &AppPaths, config: &Config) -> Result<ExitCode> {
+async fn cancel(arguments: CancelArgs, paths: &AppPaths, config: &Config) -> Result<ExitCode> {
     let grace_ms = arguments
         .grace
         .as_deref()
         .map(parse_duration_ms)
         .transpose()?
         .unwrap_or(config.execution.termination_grace_ms);
-    let requested = Store::open(paths.state_dir.join("longrun.sqlite"))?.request_cancellation(
-        arguments.job_id,
-        grace_ms,
-        now_ms()?,
-    )?;
+    let requested = match supervisor::cancel(paths, arguments.job_id, grace_ms).await {
+        Ok(requested) => requested,
+        Err(error) if supervisor_offline(&error) => Store::open(
+            paths.state_dir.join("longrun.sqlite"),
+        )?
+        .request_cancellation(arguments.job_id, grace_ms, now_ms()?)?,
+        Err(error) => return Err(error),
+    };
     if arguments.json {
         serde_json::to_writer(
             std::io::stdout(),
@@ -398,46 +430,46 @@ fn cancel(arguments: CancelArgs, paths: &AppPaths, config: &Config) -> Result<Ex
     Ok(ExitCode::SUCCESS)
 }
 
-fn gc(arguments: GcArgs, paths: &AppPaths, config: &Config) -> Result<ExitCode> {
-    let mut store = Store::open(paths.state_dir.join("longrun.sqlite"))?;
-    let candidates = store.retention_candidates(
-        now_ms()?,
-        config.retention.max_age_days,
-        config.retention.max_log_bytes,
-    )?;
-    if !arguments.dry_run {
-        for candidate in &candidates {
-            for path in [&candidate.stdout_log, &candidate.stderr_log] {
-                let path = PathBuf::from(path.to_os_string()?);
-                if !path.starts_with(&paths.log_dir) {
-                    return Err(Error::InvalidInput(
-                        "job log path is outside Longrun state".into(),
-                    ));
-                }
-                match std::fs::remove_file(path) {
-                    Ok(()) => {}
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(error) => return Err(error.into()),
-                }
-            }
+async fn gc(arguments: GcArgs, paths: &AppPaths, config: &Config) -> Result<ExitCode> {
+    let job_ids = match supervisor::gc(paths, arguments.dry_run).await {
+        Ok(job_ids) => job_ids,
+        Err(error) if supervisor_offline(&error) => {
+            Store::open(paths.state_dir.join("longrun.sqlite"))?.gc(
+                &paths.log_dir,
+                now_ms()?,
+                config.retention.max_age_days,
+                config.retention.max_log_bytes,
+                arguments.dry_run,
+            )?
         }
-        store.delete_jobs(&candidates.iter().map(|job| job.job_id).collect::<Vec<_>>())?;
-    }
+        Err(error) => return Err(error),
+    };
     if arguments.json {
         serde_json::to_writer(
             std::io::stdout(),
             &serde_json::json!({
                 "dry_run": arguments.dry_run,
-                "job_ids": candidates.iter().map(|job| job.job_id).collect::<Vec<_>>(),
+                "job_ids": job_ids,
             }),
         )?;
         std::io::stdout().write_all(b"\n")?;
     } else if arguments.dry_run {
-        println!("Would remove {} job(s)", candidates.len());
+        println!("Would remove {} job(s)", job_ids.len());
     } else {
-        println!("Removed {} job(s)", candidates.len());
+        println!("Removed {} job(s)", job_ids.len());
     }
     Ok(ExitCode::SUCCESS)
+}
+
+fn supervisor_offline(error: &Error) -> bool {
+    matches!(
+        error,
+        Error::Io(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
+            )
+    )
 }
 
 fn write_status(status: &crate::store::JobStatus, json: bool) -> Result<()> {

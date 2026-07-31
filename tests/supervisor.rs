@@ -240,7 +240,7 @@ async fn supervisor_recovers_accepted_jobs_and_starts_each_durable_job_once() {
     .expect("health");
     assert_eq!(health.result.expect("health result")["healthy"], true);
 
-    let submitted = durable_job("printf submitted");
+    let submitted = durable_job("yes x | head -c 65537");
     let response = longrun::ipc::unix::request(
         &paths.socket_path,
         &IpcRequest {
@@ -259,6 +259,43 @@ async fn supervisor_recovers_accepted_jobs_and_starts_each_durable_job_once() {
     let submitted_status = wait_for_completed_event(&paths, submitted.job_id).await;
     assert_eq!(resumed_status.execution_state, ExecutionState::Succeeded);
     assert_eq!(submitted_status.execution_state, ExecutionState::Succeeded);
+    assert_eq!(
+        longrun::supervisor::status(&paths, submitted.job_id)
+            .await
+            .expect("status")
+            .execution_state,
+        ExecutionState::Succeeded
+    );
+    assert_eq!(
+        longrun::supervisor::list(&paths, None)
+            .await
+            .expect("list")
+            .len(),
+        2
+    );
+    let logs = longrun::supervisor::logs(&paths, submitted.job_id, false, 0)
+        .await
+        .expect("logs");
+    assert_eq!(logs.bytes.len(), 64 * 1024);
+    assert!(!logs.at_end);
+    assert!(!logs.terminal);
+    let final_logs = longrun::supervisor::logs(&paths, submitted.job_id, false, logs.next_offset)
+        .await
+        .expect("final logs");
+    assert_eq!(final_logs.bytes.len(), 1);
+    assert!(final_logs.at_end);
+    assert!(final_logs.terminal);
+    assert!(
+        !longrun::supervisor::cancel(&paths, submitted.job_id, 25)
+            .await
+            .expect("cancel")
+    );
+    assert!(
+        longrun::supervisor::gc(&paths, true)
+            .await
+            .expect("gc")
+            .is_empty()
+    );
     assert_eq!(
         fs::read_to_string(&starts).expect("start count"),
         "xx",

@@ -1,7 +1,8 @@
-use std::path::Path;
+use std::{io::SeekFrom, path::Path};
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use sha2::{Digest, Sha256};
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 use crate::error::Result;
 
@@ -10,6 +11,13 @@ pub struct ByteTail {
     pub bytes: Vec<u8>,
     pub truncated: bool,
     pub sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LogChunk {
+    pub bytes: Vec<u8>,
+    pub next_offset: u64,
+    pub at_end: bool,
 }
 
 pub fn byte_tail(input: &[u8], limit: usize) -> ByteTail {
@@ -29,10 +37,33 @@ pub fn render_untrusted(tail: &ByteTail) -> String {
     )
 }
 
-pub async fn read_log(path: &Path) -> Result<Vec<u8>> {
-    match tokio::fs::read(path).await {
-        Ok(bytes) => Ok(bytes),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
-        Err(error) => Err(error.into()),
+pub async fn read_log_chunk(path: &Path, offset: u64, max_bytes: usize) -> Result<LogChunk> {
+    if max_bytes == 0 {
+        return Err(crate::error::Error::InvalidInput(
+            "log chunk size must be positive".into(),
+        ));
     }
+    let mut file = match tokio::fs::File::open(path).await {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(LogChunk {
+                bytes: Vec::new(),
+                next_offset: 0,
+                at_end: true,
+            });
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let length = file.metadata().await?.len();
+    let offset = offset.min(length);
+    file.seek(SeekFrom::Start(offset)).await?;
+    let mut bytes = vec![0; max_bytes];
+    let read = file.read(&mut bytes).await?;
+    bytes.truncate(read);
+    let next_offset = offset.saturating_add(read as u64);
+    Ok(LogChunk {
+        bytes,
+        next_offset,
+        at_end: next_offset >= length,
+    })
 }

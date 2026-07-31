@@ -743,6 +743,41 @@ impl Store {
         Ok(())
     }
 
+    pub fn gc(
+        &mut self,
+        log_dir: &Path,
+        now_ms: i64,
+        max_age_days: u32,
+        max_log_bytes: u64,
+        dry_run: bool,
+    ) -> Result<Vec<Uuid>> {
+        let candidates = self.retention_candidates(now_ms, max_age_days, max_log_bytes)?;
+        let job_ids = candidates.iter().map(|job| job.job_id).collect::<Vec<_>>();
+        if dry_run {
+            return Ok(job_ids);
+        }
+        for candidate in &candidates {
+            for (suffix, stored_path) in [
+                ("stdout", &candidate.stdout_log),
+                ("stderr", &candidate.stderr_log),
+            ] {
+                let expected = log_dir.join(format!("{}.{}.log", candidate.job_id, suffix));
+                if stored_path.to_os_string()? != expected.clone().into_os_string() {
+                    return Err(Error::InvalidInput(
+                        "job log path is outside Longrun state".into(),
+                    ));
+                }
+                match fs::remove_file(expected) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error.into()),
+                }
+            }
+        }
+        self.delete_jobs(&job_ids)?;
+        Ok(job_ids)
+    }
+
     pub fn transition_execution(&mut self, job_id: Uuid, next: ExecutionState) -> Result<()> {
         let transaction = self.connection.transaction()?;
         let job_id = job_id.to_string();

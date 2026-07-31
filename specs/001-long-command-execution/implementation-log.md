@@ -392,3 +392,28 @@ commits required by the constitution.
 - Review: completion notification is metadata from persisted state. It cannot
   grant command authority, and no event or IPC handler can spawn a requested
   command directly.
+
+## Supervisor Job-Operation Routing
+
+- 2026-07-31: completed durable IPC routing for status, list, log reads,
+  cancellation, and garbage collection. The supervisor owns retention policy,
+  and CLI commands use IPC when the per-user endpoint is available, retaining
+  a local-store fallback only when no supervisor endpoint exists.
+- Logs use URL-safe base64 payloads and 64 KiB offset chunks, so a full local
+  log is never placed in one IPC frame. Shared GC removes only terminal,
+  delivered, lease-free jobs and validates each persisted log path against the
+  job's expected Longrun log location before deletion.
+- Focused checks: the real Unix supervisor test exercises submit, wait,
+  status, list, chunked logs, cancellation, and dry-run GC. Its 65,537-byte
+  log proves the first IPC response stops at 64 KiB and the second resumes at
+  the returned offset. Store and output tests cover retention deletion and
+  bounded offset reads.
+- Live check: with a disposable home, isolated runtime directory, fake
+  `codex sandbox`, and `retention.max_log_bytes = 1`, a durable
+  `printf ipc-routed` job completed through the daemon. `status`, `list`,
+  `logs`, terminal `cancel`, and dry-run `gc` all returned the persisted job
+  data through the active supervisor endpoint.
+- Review: new IPC handlers read persisted state and logs or request
+  cancellation only. The supervisor still spawns only hidden
+  `longrun internal worker` processes; the worker/runner remains the sole
+  requested-command execution authority.

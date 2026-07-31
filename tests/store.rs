@@ -253,16 +253,18 @@ fn retention_selects_only_delivered_terminal_jobs_by_age_and_log_budget() {
             .collect::<Vec<_>>(),
         vec![aged.job_id, retained.job_id]
     );
-    store
-        .delete_jobs(
-            &selected
-                .iter()
-                .map(|result| result.job_id)
-                .collect::<Vec<_>>(),
-        )
-        .expect("delete");
+    assert_eq!(
+        store.gc(&root, 172_800_000, 1, 5, false).expect("gc"),
+        vec![aged.job_id, retained.job_id]
+    );
     assert!(store.status(aged.job_id).is_err());
     assert!(store.status(retained.job_id).is_err());
+    assert!(!root.join(format!("{}.stdout.log", aged.job_id)).exists());
+    assert!(
+        !root
+            .join(format!("{}.stdout.log", retained.job_id))
+            .exists()
+    );
     assert_eq!(
         store
             .status(undelivered.job_id)

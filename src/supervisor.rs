@@ -9,6 +9,7 @@ use std::{
     },
 };
 
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     process::Command,
@@ -20,6 +21,7 @@ use crate::{
     config::Config,
     error::{Error, Result},
     ipc::{read_frame, validate_protocol_version, write_frame},
+    output::read_log_chunk,
     paths::AppPaths,
     protocol::{
         ExecutionMode, ExecutionState, IpcError, IpcEvent, IpcEventKind, IpcMethod, IpcRequest,
@@ -29,6 +31,15 @@ use crate::{
 };
 
 const WORKER_HEARTBEAT_STALE_MS: i64 = 5_000;
+const MAX_LOG_CHUNK_BYTES: usize = 64 * 1024;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LogChunk {
+    pub bytes: Vec<u8>,
+    pub next_offset: u64,
+    pub at_end: bool,
+    pub terminal: bool,
+}
 
 #[derive(Clone)]
 pub struct Supervisor {
@@ -41,6 +52,8 @@ pub struct Supervisor {
     connections: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
     stopping: Arc<AtomicBool>,
     termination_grace_ms: u64,
+    max_age_days: u32,
+    max_log_bytes: u64,
 }
 
 impl Supervisor {
@@ -66,6 +79,8 @@ impl Supervisor {
             connections: Arc::new(Mutex::new(Vec::new())),
             stopping: Arc::new(AtomicBool::new(false)),
             termination_grace_ms: config.execution.termination_grace_ms,
+            max_age_days: config.retention.max_age_days,
+            max_log_bytes: config.retention.max_log_bytes,
         })
     }
 
@@ -389,6 +404,19 @@ impl Supervisor {
                     .status(job_id(&request.params)?)?;
                 Ok(serde_json::to_value(status)?)
             }
+            IpcMethod::List => {
+                let state = request
+                    .params
+                    .get("state")
+                    .filter(|state| !state.is_null())
+                    .cloned()
+                    .map(serde_json::from_value)
+                    .transpose()?;
+                Ok(serde_json::to_value(
+                    Store::open(self.paths.state_dir.join("longrun.sqlite"))?.list(state)?,
+                )?)
+            }
+            IpcMethod::Logs => self.logs(&request.params).await,
             IpcMethod::Cancel => {
                 let job_id = job_id(&request.params)?;
                 let grace_ms = request
@@ -400,10 +428,48 @@ impl Supervisor {
                     .request_cancellation(job_id, grace_ms, now_ms()?)?;
                 Ok(serde_json::json!({ "cancellation_requested": requested }))
             }
-            _ => Err(Error::Unavailable(
-                "supervisor method is not initialized".into(),
-            )),
+            IpcMethod::Gc => {
+                let dry_run = request
+                    .params
+                    .get("dry_run")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false);
+                let job_ids = Store::open(self.paths.state_dir.join("longrun.sqlite"))?.gc(
+                    &self.paths.log_dir,
+                    now_ms()?,
+                    self.max_age_days,
+                    self.max_log_bytes,
+                    dry_run,
+                )?;
+                Ok(serde_json::json!({ "job_ids": job_ids }))
+            }
         }
+    }
+
+    async fn logs(&self, params: &serde_json::Value) -> Result<serde_json::Value> {
+        let job_id = job_id(params)?;
+        let stderr = params
+            .get("stderr")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        let offset = params
+            .get("offset")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0);
+        let status = Store::open(self.paths.state_dir.join("longrun.sqlite"))?.status(job_id)?;
+        let suffix = if stderr { "stderr" } else { "stdout" };
+        let chunk = read_log_chunk(
+            &self.paths.log_dir.join(format!("{job_id}.{suffix}.log")),
+            offset,
+            MAX_LOG_CHUNK_BYTES,
+        )
+        .await?;
+        Ok(serde_json::json!({
+            "bytes": URL_SAFE_NO_PAD.encode(chunk.bytes),
+            "next_offset": chunk.next_offset,
+            "at_end": chunk.at_end,
+            "terminal": status.execution_state.is_terminal() && chunk.at_end,
+        }))
     }
 
     fn submit(&self, params: &serde_json::Value) -> Result<serde_json::Value> {
@@ -493,6 +559,97 @@ pub async fn start_existing(paths: &AppPaths, job_id: uuid::Uuid) -> Result<()> 
 pub async fn wait(paths: &AppPaths, job_id: uuid::Uuid) -> Result<crate::store::JobStatus> {
     serde_json::from_value(request(paths, IpcMethod::Wait, job_params(job_id)).await?)
         .map_err(Error::from)
+}
+
+pub async fn status(paths: &AppPaths, job_id: uuid::Uuid) -> Result<crate::store::JobStatus> {
+    serde_json::from_value(request(paths, IpcMethod::Status, job_params(job_id)).await?)
+        .map_err(Error::from)
+}
+
+pub async fn list(
+    paths: &AppPaths,
+    state: Option<ExecutionState>,
+) -> Result<Vec<crate::store::JobStatus>> {
+    serde_json::from_value(
+        request(
+            paths,
+            IpcMethod::List,
+            serde_json::json!({ "state": state }),
+        )
+        .await?,
+    )
+    .map_err(Error::from)
+}
+
+pub async fn logs(
+    paths: &AppPaths,
+    job_id: uuid::Uuid,
+    stderr: bool,
+    offset: u64,
+) -> Result<LogChunk> {
+    let response = request(
+        paths,
+        IpcMethod::Logs,
+        serde_json::json!({
+            "job_id": job_id,
+            "stderr": stderr,
+            "offset": offset,
+        }),
+    )
+    .await?;
+    let bytes = response
+        .get("bytes")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| Error::Unavailable("supervisor returned no log bytes".into()))
+        .and_then(|bytes| {
+            URL_SAFE_NO_PAD.decode(bytes).map_err(|error| {
+                Error::InvalidInput(format!("invalid supervisor log bytes: {error}"))
+            })
+        })?;
+    let next_offset = response
+        .get("next_offset")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| Error::Unavailable("supervisor returned no log offset".into()))?;
+    let terminal = response
+        .get("terminal")
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(|| Error::Unavailable("supervisor returned no log terminal state".into()))?;
+    let at_end = response
+        .get("at_end")
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(|| Error::Unavailable("supervisor returned no log end state".into()))?;
+    Ok(LogChunk {
+        bytes,
+        next_offset,
+        at_end,
+        terminal,
+    })
+}
+
+pub async fn cancel(paths: &AppPaths, job_id: uuid::Uuid, grace_ms: u64) -> Result<bool> {
+    request(
+        paths,
+        IpcMethod::Cancel,
+        serde_json::json!({ "job_id": job_id, "grace_ms": grace_ms }),
+    )
+    .await?
+    .get("cancellation_requested")
+    .and_then(serde_json::Value::as_bool)
+    .ok_or_else(|| Error::Unavailable("supervisor returned no cancellation state".into()))
+}
+
+pub async fn gc(paths: &AppPaths, dry_run: bool) -> Result<Vec<uuid::Uuid>> {
+    let response = request(
+        paths,
+        IpcMethod::Gc,
+        serde_json::json!({ "dry_run": dry_run }),
+    )
+    .await?;
+    response
+        .get("job_ids")
+        .cloned()
+        .ok_or_else(|| Error::Unavailable("supervisor returned no garbage-collection jobs".into()))
+        .and_then(|job_ids| serde_json::from_value(job_ids).map_err(Error::from))
 }
 
 fn job_id(params: &serde_json::Value) -> Result<uuid::Uuid> {
