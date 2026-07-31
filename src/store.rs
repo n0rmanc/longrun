@@ -10,7 +10,9 @@ use uuid::Uuid;
 
 use crate::{
     error::{Error, Result},
-    protocol::{DeliveryState, ExecutionState, JobSpecification, PendingState, PendingSubmission},
+    protocol::{
+        DeliveryState, ExecutionState, JobResult, JobSpecification, PendingState, PendingSubmission,
+    },
 };
 
 pub struct Store {
@@ -203,6 +205,93 @@ impl Store {
             |row| row.get(0),
         )?;
         state.parse()
+    }
+
+    pub fn job(&self, job_id: Uuid) -> Result<JobSpecification> {
+        let specification: String = self.connection.query_row(
+            "SELECT spec_json FROM jobs WHERE job_id = ?1",
+            [job_id.to_string()],
+            |row| row.get(0),
+        )?;
+        Ok(serde_json::from_str(&specification)?)
+    }
+
+    pub fn claim_execution(&mut self, job_id: Uuid, claim: &str) -> Result<JobSpecification> {
+        let transaction = self.connection.transaction()?;
+        let job_id = job_id.to_string();
+        let specification: String = transaction.query_row(
+            "SELECT spec_json FROM jobs WHERE job_id = ?1",
+            [job_id.as_str()],
+            |row| row.get(0),
+        )?;
+        let changed = transaction.execute(
+            "UPDATE executions
+             SET state = 'starting', execution_claim = ?1, worker_id = ?2
+             WHERE job_id = ?2 AND state = 'accepted' AND execution_claim IS NULL",
+            params![claim, job_id],
+        )?;
+        if changed != 1 {
+            return Err(Error::Denied(
+                "job is already claimed or is no longer executable".into(),
+            ));
+        }
+        transaction.commit()?;
+        Ok(serde_json::from_str(&specification)?)
+    }
+
+    pub fn mark_running(&mut self, job_id: Uuid, claim: &str) -> Result<()> {
+        let changed = self.connection.execute(
+            "UPDATE executions SET state = 'running', started_at_ms = unixepoch() * 1000
+             WHERE job_id = ?1 AND state = 'starting' AND execution_claim = ?2",
+            params![job_id.to_string(), claim],
+        )?;
+        if changed != 1 {
+            return Err(Error::Denied("execution claim is not active".into()));
+        }
+        Ok(())
+    }
+
+    pub fn finish_execution(&mut self, result: &JobResult, claim: &str) -> Result<()> {
+        if !result.terminal_state.is_terminal() {
+            return Err(Error::InvalidInput("result must be terminal".into()));
+        }
+        let transaction = self.connection.transaction()?;
+        let job_id = result.job_id.to_string();
+        let changed = transaction.execute(
+            "UPDATE executions
+             SET state = ?1, finished_at_ms = ?2
+             WHERE job_id = ?3 AND state = 'running' AND execution_claim = ?4",
+            params![
+                result.terminal_state.as_str(),
+                result.completed_at_ms,
+                job_id,
+                claim
+            ],
+        )?;
+        if changed != 1 {
+            return Err(Error::Denied(
+                "execution claim cannot finish this job".into(),
+            ));
+        }
+        transaction.execute(
+            "INSERT INTO results (job_id, result_json, created_at_ms) VALUES (?1, ?2, ?3)",
+            params![
+                job_id,
+                serde_json::to_string(result)?,
+                result.completed_at_ms
+            ],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn result(&self, job_id: Uuid) -> Result<JobResult> {
+        let result: String = self.connection.query_row(
+            "SELECT result_json FROM results WHERE job_id = ?1",
+            [job_id.to_string()],
+            |row| row.get(0),
+        )?;
+        Ok(serde_json::from_str(&result)?)
     }
 
     pub fn transition_execution(&mut self, job_id: Uuid, next: ExecutionState) -> Result<()> {

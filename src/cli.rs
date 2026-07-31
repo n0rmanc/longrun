@@ -22,6 +22,7 @@ use crate::{
     },
     receipt::{ReceiptPayload, ReceiptSigner},
     store::Store,
+    worker::run_worker,
 };
 
 #[derive(Debug, Parser)]
@@ -265,15 +266,191 @@ pub enum CodexHookCommand {
     SessionStart,
 }
 
-pub fn dispatch(cli: Cli, paths: &AppPaths, config: &Config) -> Result<ExitCode> {
+pub async fn dispatch(cli: Cli, paths: &AppPaths, config: &Config) -> Result<ExitCode> {
     match cli.command {
         Command::Submit(arguments) => submit(arguments, paths, config),
         Command::SubmitShell(arguments) => submit_shell(arguments, paths, config),
         Command::Hook(arguments) => hook(arguments, paths),
+        Command::Run(arguments) => run(arguments, paths, config).await,
+        Command::RunShell(arguments) => run_shell(arguments, paths, config).await,
+        Command::Internal(arguments) => internal(arguments, paths, config).await,
         command => Err(Error::Unavailable(format!(
             "`longrun {}` is not available until the runtime is initialized",
             command.name()
         ))),
+    }
+}
+
+async fn run(arguments: ExecutionArgs, paths: &AppPaths, config: &Config) -> Result<ExitCode> {
+    let cwd = NativeString::from_os_string(std::env::current_dir()?.into_os_string());
+    let program = NativeString::from_os_string(
+        arguments
+            .program
+            .first()
+            .cloned()
+            .ok_or_else(|| Error::InvalidInput("missing program".into()))?,
+    );
+    let args = arguments
+        .program
+        .into_iter()
+        .skip(1)
+        .map(NativeString::from_os_string)
+        .collect::<Vec<_>>();
+    let mode = arguments
+        .mode
+        .map_or(ExecutionMode::Embedded, |mode| match mode {
+            ModeArg::Embedded => ExecutionMode::Embedded,
+            ModeArg::Durable => ExecutionMode::Durable,
+        });
+    if mode == ExecutionMode::Durable {
+        return Err(Error::Unavailable(
+            "durable execution requires the supervisor runtime".into(),
+        ));
+    }
+    let timeout_ms = arguments
+        .timeout
+        .as_deref()
+        .map(parse_duration_ms)
+        .transpose()?
+        .unwrap_or(config.execution.timeout_ms);
+    let permission_profile = arguments
+        .permission_profile
+        .unwrap_or_else(|| config.execution.permission_profile.clone());
+    let environment_policy = EnvironmentPolicy {
+        pass: config
+            .environment
+            .pass
+            .iter()
+            .chain(arguments.env_pass.iter())
+            .cloned()
+            .collect(),
+        deny_patterns: config.environment.deny_patterns.clone(),
+    };
+    let command_hash = sha256_hex(&serde_json::to_vec(&(
+        &program,
+        &args,
+        &cwd,
+        timeout_ms,
+        &permission_profile,
+        &environment_policy,
+    ))?);
+    let job = JobSpecification {
+        protocol_version: crate::protocol::PROTOCOL_VERSION,
+        job_id: Uuid::now_v7(),
+        program,
+        args,
+        cwd,
+        execution_mode: mode,
+        shell_mode: ShellMode::Direct,
+        timeout_ms,
+        permission_profile,
+        environment_policy,
+        created_at_ms: now_ms()?,
+        command_hash,
+    };
+    execute_direct(job, paths, config, arguments.json).await
+}
+
+async fn run_shell(arguments: ShellArgs, paths: &AppPaths, config: &Config) -> Result<ExitCode> {
+    if !config.execution.allow_shell {
+        return Err(Error::Denied(
+            "shell execution requires execution.allow_shell = true".into(),
+        ));
+    }
+    let cwd = NativeString::from_os_string(std::env::current_dir()?.into_os_string());
+    let program = NativeString {
+        encoding: crate::protocol::NativeEncoding::Utf8,
+        value: "longrun-shell".into(),
+    };
+    let args = vec![NativeString {
+        encoding: crate::protocol::NativeEncoding::Utf8,
+        value: arguments.script,
+    }];
+    let timeout_ms = arguments
+        .timeout
+        .as_deref()
+        .map(parse_duration_ms)
+        .transpose()?
+        .unwrap_or(config.execution.timeout_ms);
+    let permission_profile = arguments
+        .permission_profile
+        .unwrap_or_else(|| config.execution.permission_profile.clone());
+    let environment_policy = EnvironmentPolicy {
+        pass: config.environment.pass.clone(),
+        deny_patterns: config.environment.deny_patterns.clone(),
+    };
+    let command_hash = sha256_hex(&serde_json::to_vec(&(
+        &program,
+        &args,
+        &cwd,
+        timeout_ms,
+        &permission_profile,
+        &environment_policy,
+    ))?);
+    let job = JobSpecification {
+        protocol_version: crate::protocol::PROTOCOL_VERSION,
+        job_id: Uuid::now_v7(),
+        program,
+        args,
+        cwd,
+        execution_mode: ExecutionMode::Embedded,
+        shell_mode: ShellMode::ExplicitShell,
+        timeout_ms,
+        permission_profile,
+        environment_policy,
+        created_at_ms: now_ms()?,
+        command_hash,
+    };
+    execute_direct(job, paths, config, arguments.json).await
+}
+
+async fn execute_direct(
+    job: JobSpecification,
+    paths: &AppPaths,
+    config: &Config,
+    json: bool,
+) -> Result<ExitCode> {
+    let database = paths.state_dir.join("longrun.sqlite");
+    Store::open(&database)?.create_job(&job)?;
+    let result = run_worker(job.job_id, &database, config, paths).await?;
+    render_direct_result(&result, json).await
+}
+
+async fn internal(arguments: InternalArgs, paths: &AppPaths, config: &Config) -> Result<ExitCode> {
+    match arguments.command {
+        InternalCommand::Worker { job_id } => {
+            let result = run_worker(
+                job_id,
+                &paths.state_dir.join("longrun.sqlite"),
+                config,
+                paths,
+            )
+            .await?;
+            Ok(result_exit_code(&result))
+        }
+    }
+}
+
+async fn render_direct_result(result: &crate::protocol::JobResult, json: bool) -> Result<ExitCode> {
+    if json {
+        serde_json::to_writer(std::io::stdout(), result)?;
+        std::io::stdout().write_all(b"\n")?;
+    } else {
+        std::io::stdout().write_all(&tokio::fs::read(result.stdout_log.to_os_string()?).await?)?;
+        std::io::stderr().write_all(&tokio::fs::read(result.stderr_log.to_os_string()?).await?)?;
+    }
+    Ok(result_exit_code(result))
+}
+
+fn result_exit_code(result: &crate::protocol::JobResult) -> ExitCode {
+    match result.terminal_state {
+        crate::protocol::ExecutionState::Succeeded => ExitCode::SUCCESS,
+        crate::protocol::ExecutionState::Failed => {
+            ExitCode::from(result.exit_code.unwrap_or(70).clamp(1, 255) as u8)
+        }
+        crate::protocol::ExecutionState::TimedOut => ExitCode::from(124),
+        crate::protocol::ExecutionState::Cancelled => ExitCode::from(130),
+        _ => ExitCode::from(70),
     }
 }
 

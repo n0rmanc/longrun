@@ -10,3 +10,4 @@ pub mod protocol;
 pub mod receipt;
 pub mod runner;
 pub mod store;
+pub mod worker;

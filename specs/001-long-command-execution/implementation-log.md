@@ -50,3 +50,15 @@ commits required by the constitution.
 - Review: no CLI or hook path invokes the requested program directly. The
   internal worker will own claims and result persistence before any user-facing
   execution route is enabled.
+
+## Worker-Owned Direct Execution
+
+- 2026-07-31: added transactional execution claims, hidden internal workers,
+  terminal result persistence, and direct `longrun run` / `run-shell`
+  dispatch through that one worker.
+- Focused checks: worker replay test; runner log test; full lint; live
+  `longrun run -- /bin/sh -c 'printf out; printf err >&2; exit 7'`, which
+  preserved separated streams and propagated exit status 7.
+- Review: a second worker cannot claim an accepted job. The runner remains the
+  sole command-spawn authority; durable routing, process-tree cleanup, and
+  PostToolUse waiting remain pending rather than falling back to direct spawn.

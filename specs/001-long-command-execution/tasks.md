@@ -120,8 +120,8 @@ fixtures through `longrun run`.
 
 ### Implementation for User Story 2
 
-- [ ] T036 [US2] Implement sandbox command construction using `codex sandbox -P PROFILE -C CWD -- ...` in `src/runner.rs`
-- [ ] T037 [US2] Implement exclusive execution claims plus the hidden worker's asynchronous child execution, separate output streaming, timeout selection, and result persistence in `src/worker.rs` and `src/runner.rs`
+- [X] T036 [US2] Implement sandbox command construction using `codex sandbox -P PROFILE -C CWD -- ...` in `src/runner.rs`
+- [X] T037 [US2] Implement exclusive execution claims plus the hidden worker's asynchronous child execution, separate output streaming, timeout selection, and result persistence in `src/worker.rs` and `src/runner.rs`
 - [ ] T038 [US2] Implement `longrun run` and explicit `run-shell` command behavior with child-status propagation in `src/cli.rs`
 - [ ] T039 [US2] Add human-readable and JSON result rendering without mixing stdout and diagnostics in `src/cli.rs`
 - [ ] T040 [US2] Run direct CLI live fixtures, review the diff, and record evidence in `specs/001-long-command-execution/implementation-log.md`

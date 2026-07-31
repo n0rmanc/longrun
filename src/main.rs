@@ -15,7 +15,7 @@ fn init_tracing(filter: &str) {
         .init();
 }
 
-fn run() -> longrun::error::Result<ExitCode> {
+async fn run() -> longrun::error::Result<ExitCode> {
     let cli = Cli::parse();
     let paths = AppPaths::discover()?;
     paths.ensure_private_state()?;
@@ -25,12 +25,12 @@ fn run() -> longrun::error::Result<ExitCode> {
         .unwrap_or_else(|| paths.config_dir.join("config.toml"));
     let config = Config::load(&config_path)?;
     init_tracing(&config.diagnostics.log_level);
-    cli::dispatch(cli, &paths, &config)
+    cli::dispatch(cli, &paths, &config).await
 }
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    match run() {
+    match run().await {
         Ok(code) => code,
         Err(error) => {
             eprintln!("longrun: {error}");
