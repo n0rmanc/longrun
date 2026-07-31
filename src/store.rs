@@ -493,6 +493,22 @@ impl Store {
         Ok(serde_json::from_str(&result)?)
     }
 
+    pub fn undelivered_result_for_session(&self, session_id: &str) -> Result<Option<JobResult>> {
+        self.connection
+            .query_row(
+                "SELECT results.result_json
+                 FROM deliveries
+                 JOIN results USING (job_id)
+                 WHERE deliveries.session_id = ?1 AND deliveries.state = 'undelivered'
+                 ORDER BY results.created_at_ms ASC LIMIT 1",
+                [session_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .map(|result| serde_json::from_str(&result).map_err(Error::from))
+            .transpose()
+    }
+
     pub fn status(&self, job_id: Uuid) -> Result<JobStatus> {
         let (execution, delivery): (String, String) = self.connection.query_row(
             "SELECT executions.state, deliveries.state
