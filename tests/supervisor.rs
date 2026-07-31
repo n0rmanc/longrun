@@ -96,6 +96,23 @@ async fn unix_ipc_transport_round_trips_a_request_and_locks_the_socket_to_the_us
     std::fs::remove_dir_all(root).expect("cleanup");
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn unix_ipc_bind_reclaims_a_stale_socket_without_replacing_a_live_server() {
+    let root = std::env::temp_dir().join(format!("lr-stale-{}", Uuid::now_v7()));
+    std::fs::create_dir_all(&root).expect("root");
+    let socket = std::env::temp_dir().join(format!("lr-stale-{}.sock", Uuid::now_v7()));
+    let listener = longrun::ipc::unix::bind(&socket).await.expect("first bind");
+    assert!(longrun::ipc::unix::bind(&socket).await.is_err());
+    drop(listener);
+    let replacement = longrun::ipc::unix::bind(&socket)
+        .await
+        .expect("reclaim stale");
+    drop(replacement);
+    std::fs::remove_file(&socket).expect("socket cleanup");
+    std::fs::remove_dir_all(root).expect("cleanup");
+}
+
 #[cfg(windows)]
 #[tokio::test]
 async fn windows_ipc_transport_round_trips_a_request() {
