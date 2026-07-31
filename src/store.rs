@@ -492,6 +492,65 @@ impl Store {
         .collect()
     }
 
+    pub fn retention_candidates(
+        &self,
+        now_ms: i64,
+        max_age_days: u32,
+        max_log_bytes: u64,
+    ) -> Result<Vec<JobResult>> {
+        let cutoff_ms = now_ms.saturating_sub(i64::from(max_age_days).saturating_mul(86_400_000));
+        let mut statement = self.connection.prepare(
+            "SELECT results.result_json
+             FROM jobs
+             JOIN executions USING (job_id)
+             JOIN deliveries USING (job_id)
+             JOIN results USING (job_id)
+             WHERE executions.state IN ('succeeded', 'failed', 'timed_out', 'cancelled')
+               AND deliveries.state IN ('delivered_in_turn', 'delivered_on_start', 'delivered_by_resume')
+               AND NOT EXISTS (
+                   SELECT 1 FROM leases
+                   WHERE leases.job_id = jobs.job_id AND leases.expires_at_ms > ?1
+               )
+             ORDER BY results.created_at_ms ASC",
+        )?;
+        let candidates = statement
+            .query_map([now_ms], |row| row.get::<_, String>(0))?
+            .map(|row| {
+                let result = row?;
+                Ok(serde_json::from_str(&result)?)
+            })
+            .collect::<Result<Vec<JobResult>>>()?;
+        let mut total_bytes =
+            candidates
+                .iter()
+                .map(result_log_bytes)
+                .try_fold(0_u64, |total, bytes| {
+                    bytes.and_then(|bytes| {
+                        total
+                            .checked_add(bytes)
+                            .ok_or_else(|| Error::Unavailable("retained logs exceed u64".into()))
+                    })
+                })?;
+        let mut selected = Vec::new();
+        for candidate in candidates {
+            let bytes = result_log_bytes(&candidate)?;
+            if candidate.completed_at_ms < cutoff_ms || total_bytes > max_log_bytes {
+                total_bytes = total_bytes.saturating_sub(bytes);
+                selected.push(candidate);
+            }
+        }
+        Ok(selected)
+    }
+
+    pub fn delete_jobs(&mut self, jobs: &[Uuid]) -> Result<()> {
+        let transaction = self.connection.transaction()?;
+        for job_id in jobs {
+            transaction.execute("DELETE FROM jobs WHERE job_id = ?1", [job_id.to_string()])?;
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
     pub fn transition_execution(&mut self, job_id: Uuid, next: ExecutionState) -> Result<()> {
         let transaction = self.connection.transaction()?;
         let job_id = job_id.to_string();
@@ -568,4 +627,19 @@ impl Store {
         fs::remove_file(temporary)?;
         Ok(())
     }
+}
+
+fn result_log_bytes(result: &JobResult) -> Result<u64> {
+    [
+        result.stdout_log.to_os_string()?,
+        result.stderr_log.to_os_string()?,
+    ]
+    .into_iter()
+    .try_fold(0_u64, |total, path| match fs::metadata(path) {
+        Ok(metadata) => total
+            .checked_add(metadata.len())
+            .ok_or_else(|| Error::Unavailable("job log bytes exceed u64".into())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(total),
+        Err(error) => Err(error.into()),
+    })
 }

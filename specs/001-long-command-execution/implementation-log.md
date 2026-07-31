@@ -180,3 +180,22 @@ commits required by the constitution.
   returned exit 130, and reported `execution_state: cancelled`.
 - Review: callers do not receive or act on child PIDs; only the owning runner
   consumes cancellation state, preserving a single tree-cleanup authority.
+
+## Local Job Inspection and Retention
+
+- 2026-07-31: completed local status/list/wait/log commands, byte-safe log
+  reads and follow, and retention GC. Direct commands mark their result as
+  delivered to their waiting caller; GC selects only delivered terminal jobs
+  without an active lease, then applies age and total-log-byte limits.
+- Focused checks: binary-level CLI tests cover status/list/wait JSON, stdout
+  and stderr selection, `--follow`, and non-UTF-8 logs. Store tests prove
+  undelivered jobs are retained while delivered jobs are selected by both age
+  and byte budget.
+- Live check: with `max_age_days = 0`, `gc --dry-run --json` and `gc --json`
+  selected the same completed job and its later `status` exited 70.
+- Two-terminal check: a running ten-second job was listed and inspected,
+  `logs --follow` was attached, a second terminal cancelled it, and the
+  original runner plus `wait` both returned 130 while the follower returned
+  0 and final JSON reported `cancelled` / `delivered_in_turn`.
+- Review: GC validates every stored log path remains inside Longrun's log
+  directory before deletion, then deletes database records only after logs.

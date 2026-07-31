@@ -2,7 +2,8 @@ use std::{ffi::OsString, fs};
 
 use longrun::{
     protocol::{
-        EnvironmentPolicy, ExecutionMode, ExecutionState, JobSpecification, NativeString, ShellMode,
+        DeliveryState, EnvironmentPolicy, ExecutionMode, ExecutionState, JobResult,
+        JobSpecification, NativeString, ShellMode,
     },
     store::Store,
 };
@@ -23,6 +24,48 @@ fn specification() -> JobSpecification {
         created_at_ms: 1,
         command_hash: "sha256:test".into(),
     }
+}
+
+fn complete(
+    store: &mut Store,
+    job: &JobSpecification,
+    root: &std::path::Path,
+    completed_at_ms: i64,
+    delivered: bool,
+    stdout: &[u8],
+) -> JobResult {
+    store.create_job(job).expect("job");
+    store.claim_execution(job.job_id, "claim").expect("claim");
+    store.mark_running(job.job_id, "claim").expect("running");
+    let stdout_log = root.join(format!("{}.stdout.log", job.job_id));
+    let stderr_log = root.join(format!("{}.stderr.log", job.job_id));
+    fs::write(&stdout_log, stdout).expect("stdout");
+    fs::write(&stderr_log, []).expect("stderr");
+    let result = JobResult {
+        job_id: job.job_id,
+        terminal_state: ExecutionState::Succeeded,
+        exit_code: Some(0),
+        signal: None,
+        duration_ms: 1,
+        stdout_log: NativeString::from_os_string(stdout_log.into_os_string()),
+        stderr_log: NativeString::from_os_string(stderr_log.into_os_string()),
+        stdout_tail: String::new(),
+        stderr_tail: String::new(),
+        stdout_truncated: false,
+        stderr_truncated: false,
+        result_hash: "sha256:test".into(),
+        completed_at_ms,
+    };
+    store.finish_execution(&result, "claim").expect("finish");
+    if delivered {
+        store
+            .transition_delivery(job.job_id, DeliveryState::HookLeased)
+            .expect("lease");
+        store
+            .transition_delivery(job.job_id, DeliveryState::DeliveredInTurn)
+            .expect("deliver");
+    }
+    result
 }
 
 #[test]
@@ -113,6 +156,55 @@ fn running_jobs_accept_one_idempotent_cancellation_request() {
         store.cancellation_grace(job.job_id).expect("same grace"),
         Some(25)
     );
+}
+
+#[test]
+fn retention_selects_only_delivered_terminal_jobs_by_age_and_log_budget() {
+    let root = std::env::temp_dir().join(format!("longrun-retention-{}", Uuid::now_v7()));
+    fs::create_dir_all(&root).expect("root");
+    let mut store = Store::open_in_memory().expect("store");
+    let aged = specification();
+    let retained = specification();
+    let undelivered = specification();
+    complete(&mut store, &aged, &root, 1, true, b"a");
+    complete(
+        &mut store,
+        &retained,
+        &root,
+        172_800_000,
+        true,
+        b"1234567890",
+    );
+    complete(&mut store, &undelivered, &root, 1, false, b"ignored");
+
+    let selected = store
+        .retention_candidates(172_800_000, 1, 5)
+        .expect("retention");
+    assert_eq!(
+        selected
+            .iter()
+            .map(|result| result.job_id)
+            .collect::<Vec<_>>(),
+        vec![aged.job_id, retained.job_id]
+    );
+    store
+        .delete_jobs(
+            &selected
+                .iter()
+                .map(|result| result.job_id)
+                .collect::<Vec<_>>(),
+        )
+        .expect("delete");
+    assert!(store.status(aged.job_id).is_err());
+    assert!(store.status(retained.job_id).is_err());
+    assert_eq!(
+        store
+            .status(undelivered.job_id)
+            .expect("undelivered")
+            .delivery_state,
+        DeliveryState::Undelivered
+    );
+    fs::remove_dir_all(root).expect("cleanup");
 }
 
 #[test]

@@ -171,18 +171,18 @@ every job operation.
 
 ### Tests for User Story 3
 
-- [ ] T052 [P] [US3] Add failing wait, status, list, and JSON contract tests in `tests/cli.rs`
-- [ ] T053 [P] [US3] Add failing log read/follow, stdout/stderr selection, and binary-output tests in `tests/cli.rs`
-- [ ] T054 [P] [US3] Add failing idempotent cancellation and retention-safe garbage-collection tests in `tests/store.rs`
+- [X] T052 [P] [US3] Add failing wait, status, list, and JSON contract tests in `tests/cli.rs`
+- [X] T053 [P] [US3] Add failing log read/follow, stdout/stderr selection, and binary-output tests in `tests/cli.rs`
+- [X] T054 [P] [US3] Add failing idempotent cancellation and retention-safe garbage-collection tests in `tests/store.rs`
 
 ### Implementation for User Story 3
 
-- [ ] T055 [US3] Implement wait, status, and newest-first filtered list queries in `src/store.rs`
-- [ ] T056 [US3] Implement byte-safe log reads and local follow behavior in `src/output.rs`
+- [X] T055 [US3] Implement wait, status, and newest-first filtered list queries in `src/store.rs`
+- [X] T056 [US3] Implement byte-safe log reads and local follow behavior in `src/output.rs`
 - [X] T057 [US3] Implement idempotent cancellation state and owner notification in `src/runner.rs`
-- [ ] T058 [US3] Implement age and total-log-byte retention selection that excludes active, leased, and undelivered jobs in `src/store.rs`
-- [ ] T059 [US3] Wire `wait`, `status`, `list`, `logs`, `cancel`, and `gc` command output in `src/cli.rs`
-- [ ] T060 [US3] Run two-terminal job-control validation, review the diff, and record evidence in `specs/001-long-command-execution/implementation-log.md`
+- [X] T058 [US3] Implement age and total-log-byte retention selection that excludes active, leased, and undelivered jobs in `src/store.rs`
+- [X] T059 [US3] Wire `wait`, `status`, `list`, `logs`, `cancel`, and `gc` command output in `src/cli.rs`
+- [X] T060 [US3] Run two-terminal job-control validation, review the diff, and record evidence in `specs/001-long-command-execution/implementation-log.md`
 
 **Checkpoint**: All job operations work locally without agent involvement.
 

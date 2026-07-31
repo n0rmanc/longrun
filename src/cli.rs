@@ -18,6 +18,7 @@ use crate::{
         post_tool_use::handle_post_tool_use,
         pre_tool_use::{handle_pre_tool_use, now_ms},
     },
+    output::read_log,
     paths::AppPaths,
     protocol::{
         EnvironmentPolicy, ExecutionMode, JobSpecification, NativeString, ShellMode, sha256_hex,
@@ -281,6 +282,7 @@ pub async fn dispatch(cli: Cli, paths: &AppPaths, config: &Config) -> Result<Exi
         Command::List(arguments) => list(arguments, paths),
         Command::Logs(arguments) => logs(arguments, paths).await,
         Command::Cancel(arguments) => cancel(arguments, paths, config),
+        Command::Gc(arguments) => gc(arguments, paths, config),
         command => Err(Error::Unavailable(format!(
             "`longrun {}` is not available until the runtime is initialized",
             command.name()
@@ -335,11 +337,7 @@ async fn logs(arguments: LogsArgs, paths: &AppPaths) -> Result<ExitCode> {
         .join(format!("{}.{}.log", arguments.job_id, suffix));
     let mut offset = 0usize;
     loop {
-        let bytes = match tokio::fs::read(&path).await {
-            Ok(bytes) => bytes,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-            Err(error) => return Err(error.into()),
-        };
+        let bytes = read_log(&path).await?;
         if bytes.len() > offset {
             std::io::stdout().write_all(&bytes[offset..])?;
             offset = bytes.len();
@@ -381,6 +379,48 @@ fn cancel(arguments: CancelArgs, paths: &AppPaths, config: &Config) -> Result<Ex
         println!("Cancellation requested for {}", arguments.job_id);
     } else {
         println!("Job {} is already terminal or cancelling", arguments.job_id);
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn gc(arguments: GcArgs, paths: &AppPaths, config: &Config) -> Result<ExitCode> {
+    let mut store = Store::open(paths.state_dir.join("longrun.sqlite"))?;
+    let candidates = store.retention_candidates(
+        now_ms()?,
+        config.retention.max_age_days,
+        config.retention.max_log_bytes,
+    )?;
+    if !arguments.dry_run {
+        for candidate in &candidates {
+            for path in [&candidate.stdout_log, &candidate.stderr_log] {
+                let path = PathBuf::from(path.to_os_string()?);
+                if !path.starts_with(&paths.log_dir) {
+                    return Err(Error::InvalidInput(
+                        "job log path is outside Longrun state".into(),
+                    ));
+                }
+                match std::fs::remove_file(path) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error.into()),
+                }
+            }
+        }
+        store.delete_jobs(&candidates.iter().map(|job| job.job_id).collect::<Vec<_>>())?;
+    }
+    if arguments.json {
+        serde_json::to_writer(
+            std::io::stdout(),
+            &serde_json::json!({
+                "dry_run": arguments.dry_run,
+                "job_ids": candidates.iter().map(|job| job.job_id).collect::<Vec<_>>(),
+            }),
+        )?;
+        std::io::stdout().write_all(b"\n")?;
+    } else if arguments.dry_run {
+        println!("Would remove {} job(s)", candidates.len());
+    } else {
+        println!("Removed {} job(s)", candidates.len());
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -532,6 +572,9 @@ async fn execute_direct(
     let database = paths.state_dir.join("longrun.sqlite");
     Store::open(&database)?.create_job(&job)?;
     let result = run_worker(job.job_id, &database, config, paths).await?;
+    let mut store = Store::open(&database)?;
+    store.transition_delivery(job.job_id, crate::protocol::DeliveryState::HookLeased)?;
+    store.transition_delivery(job.job_id, crate::protocol::DeliveryState::DeliveredInTurn)?;
     render_direct_result(&result, json).await
 }
 

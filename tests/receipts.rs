@@ -121,8 +121,12 @@ fn tampered_receipts_and_expired_pending_submissions_are_rejected() {
     let signer = ReceiptSigner::new([3; 32]);
     let payload = payload("2099-01-01T00:00:00Z");
     let mut line = signer.issue(&payload).expect("issue").to_line();
-    let last = line.pop().expect("signature character");
-    line.push(if last == 'A' { 'B' } else { 'A' });
+    let signature_start = line.rfind('.').expect("receipt separator") + 1;
+    let first = line.as_bytes()[signature_start] as char;
+    line.replace_range(
+        signature_start..signature_start + 1,
+        if first == 'A' { "B" } else { "A" },
+    );
     let receipt = signer.parse(&line).expect("parse tampered receipt");
     assert!(
         receipt

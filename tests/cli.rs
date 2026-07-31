@@ -177,4 +177,75 @@ mod integration {
         assert_eq!(output.stdout, vec![0xff, b'\n']);
         fs::remove_dir_all(root).expect("cleanup");
     }
+
+    #[test]
+    fn completed_jobs_support_status_list_wait_and_byte_safe_logs() {
+        let (root, _) = setup();
+        let result = run(
+            &root,
+            [
+                "run",
+                "--json",
+                "--",
+                "/bin/sh",
+                "-c",
+                "printf out; printf err >&2",
+            ]
+            .map(OsString::from),
+        );
+        assert_eq!(result.status.code(), Some(0));
+        let job_id = serde_json::from_slice::<serde_json::Value>(&result.stdout)
+            .expect("result json")["job_id"]
+            .as_str()
+            .expect("job id")
+            .to_owned();
+
+        let status = run(&root, ["status", "--json", &job_id].map(OsString::from));
+        assert_eq!(status.status.code(), Some(0));
+        let status = serde_json::from_slice::<serde_json::Value>(&status.stdout).expect("status");
+        assert_eq!(status["execution_state"], "succeeded");
+        assert_eq!(status["delivery_state"], "delivered_in_turn");
+
+        let list = run(&root, ["list", "--json"].map(OsString::from));
+        assert_eq!(list.status.code(), Some(0));
+        assert!(
+            serde_json::from_slice::<serde_json::Value>(&list.stdout).expect("list")[0]["job_id"]
+                == job_id
+        );
+
+        let wait = run(&root, ["wait", "--json", &job_id].map(OsString::from));
+        assert_eq!(wait.status.code(), Some(0));
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&wait.stdout).expect("wait")["job_id"],
+            job_id
+        );
+        assert_eq!(
+            run(&root, ["logs", &job_id].map(OsString::from)).stdout,
+            b"out"
+        );
+        assert_eq!(
+            run(
+                &root,
+                ["logs", "--stderr", "--follow", &job_id].map(OsString::from)
+            )
+            .stdout,
+            b"err"
+        );
+
+        let binary = run(
+            &root,
+            ["run", "--json", "--", "/bin/sh", "-c", "printf '\\377'"].map(OsString::from),
+        );
+        assert_eq!(binary.status.code(), Some(0));
+        let binary_id = serde_json::from_slice::<serde_json::Value>(&binary.stdout)
+            .expect("binary result")["job_id"]
+            .as_str()
+            .expect("binary job id")
+            .to_owned();
+        assert_eq!(
+            run(&root, ["logs", &binary_id].map(OsString::from)).stdout,
+            [0xff]
+        );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
 }
