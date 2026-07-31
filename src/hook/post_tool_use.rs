@@ -3,10 +3,7 @@ use time::OffsetDateTime;
 use crate::{
     config::Config,
     error::{Error, Result},
-    hook::{
-        input::PostToolUseInput,
-        output::{PostHookSpecificOutput, PostToolUseOutput},
-    },
+    hook::{input::PostToolUseInput, output::PostToolUseOutput},
     paths::AppPaths,
     receipt::{ReceiptExpectation, ReceiptSigner},
     runner::Runner,
@@ -20,7 +17,7 @@ pub async fn handle_post_tool_use(
     config: &Config,
     runner: &Runner,
 ) -> Result<Option<PostToolUseOutput>> {
-    if input.hook_event_name != "PostToolUse" || input.tool_name != "Bash" {
+    if input.common.hook_event_name != "PostToolUse" || input.tool_name != "Bash" {
         return Ok(None);
     }
     let Some(line) = receipt_line(&input.tool_response)? else {
@@ -38,10 +35,12 @@ pub async fn handle_post_tool_use(
     let signer = ReceiptSigner::load_or_create(&paths.state_dir.join("receipt.key"))?;
     let receipt = signer.parse(line)?;
     let expected = ReceiptExpectation {
-        session_id: input.session_id.clone(),
+        session_id: input.common.session_id.clone(),
         turn_id: input.turn_id.clone(),
         tool_use_id: input.tool_use_id.clone(),
-        cwd: crate::protocol::NativeString::from_os_string(input.cwd.clone().into_os_string()),
+        cwd: crate::protocol::NativeString::from_os_string(
+            input.common.cwd.clone().into_os_string(),
+        ),
         command_hash: pending.command_hash.clone(),
     };
     let payload = receipt.verify(&signer, &expected, now)?;
@@ -49,19 +48,20 @@ pub async fn handle_post_tool_use(
     store.consume_pending_and_create_job(&input.tool_use_id, &payload.nonce, &job, now_ms)?;
     drop(store);
     let result = run_worker_with_runner(job.job_id, &database, config, paths, runner).await?;
-    Ok(Some(PostToolUseOutput {
-        continue_processing: false,
-        system_message: "Longrun completed the submitted command.".into(),
-        hook_specific_output: PostHookSpecificOutput {
-            hook_event_name: "PostToolUse",
-            additional_context: bounded_result_context(&result, config.output.model_max_bytes),
-        },
-    }))
+    Ok(Some(PostToolUseOutput::completed(bounded_result_context(
+        &result,
+        config.output.model_max_bytes,
+    ))))
 }
 
 fn receipt_line(response: &serde_json::Value) -> Result<Option<&str>> {
-    let Some(response) = response.as_str() else {
-        return Ok(None);
+    let response = match response {
+        serde_json::Value::String(response) => response,
+        serde_json::Value::Object(response) => match response.get("output") {
+            Some(serde_json::Value::String(response)) => response,
+            _ => return Ok(None),
+        },
+        _ => return Ok(None),
     };
     let mut matches = response
         .lines()
@@ -93,5 +93,35 @@ fn bounded_result_context(result: &crate::protocol::JobResult, limit: usize) -> 
         text
     } else {
         text[..limit].to_owned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::receipt_line;
+
+    #[test]
+    fn receipt_line_accepts_only_documented_text_shapes() {
+        assert_eq!(
+            receipt_line(&json!("LONGRUN_RECEIPT_V1 one")).expect("string"),
+            Some("LONGRUN_RECEIPT_V1 one")
+        );
+        assert_eq!(
+            receipt_line(&json!({"output": "LONGRUN_RECEIPT_V1 two"})).expect("output"),
+            Some("LONGRUN_RECEIPT_V1 two")
+        );
+        assert!(
+            receipt_line(&json!({"stdout": "LONGRUN_RECEIPT_V1 three"}))
+                .expect("other field")
+                .is_none()
+        );
+        assert!(
+            receipt_line(&json!({"output": ["LONGRUN_RECEIPT_V1 four"]}))
+                .expect("non-text output")
+                .is_none()
+        );
+        assert!(receipt_line(&json!("LONGRUN_RECEIPT_V1 one\nLONGRUN_RECEIPT_V1 two")).is_err());
     }
 }

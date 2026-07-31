@@ -2,7 +2,7 @@ use std::path::Path;
 
 use longrun::{
     hook::{
-        input::{BashInput, PreToolUseInput},
+        input::{CodexCommonInput, PreToolUseInput},
         pre_tool_use::handle_pre_tool_use,
     },
     store::Store,
@@ -10,15 +10,24 @@ use longrun::{
 
 fn input(command: &str) -> PreToolUseInput {
     PreToolUseInput {
-        session_id: "session".into(),
+        common: common("PreToolUse"),
         turn_id: "turn".into(),
         tool_use_id: "tool".into(),
-        cwd: std::env::current_dir().expect("cwd"),
-        hook_event_name: "PreToolUse".into(),
         tool_name: "Bash".into(),
-        tool_input: BashInput {
-            command: command.into(),
-        },
+        tool_input: serde_json::json!({ "command": command }),
+    }
+}
+
+fn common(hook_event_name: &str) -> CodexCommonInput {
+    CodexCommonInput {
+        session_id: "session".into(),
+        agent_id: None,
+        agent_type: None,
+        transcript_path: None,
+        cwd: std::env::current_dir().expect("cwd"),
+        hook_event_name: hook_event_name.into(),
+        model: "gpt-test".into(),
+        permission_mode: "default".into(),
     }
 }
 
@@ -115,16 +124,12 @@ async fn post_tool_use_consumes_a_receipt_waits_locally_and_rejects_replay() {
         .expect("receipt")
         .to_line();
     let input = PostToolUseInput {
-        session_id: "session".into(),
+        common: common("PostToolUse"),
         turn_id: "turn".into(),
         tool_use_id: "tool".into(),
-        cwd: std::env::current_dir().expect("cwd"),
-        hook_event_name: "PostToolUse".into(),
         tool_name: "Bash".into(),
-        tool_input: BashInput {
-            command: "ignored".into(),
-        },
-        tool_response: serde_json::Value::String(line),
+        tool_input: serde_json::json!({ "command": "ignored" }),
+        tool_response: serde_json::json!({ "output": line }),
     };
     let output = handle_post_tool_use(
         &input,
@@ -135,7 +140,7 @@ async fn post_tool_use_consumes_a_receipt_waits_locally_and_rejects_replay() {
     .await
     .expect("post")
     .expect("output");
-    assert!(!output.continue_processing);
+    assert!(!output.universal.continue_processing);
     assert!(
         output
             .hook_specific_output
@@ -148,6 +153,111 @@ async fn post_tool_use_consumes_a_receipt_waits_locally_and_rejects_replay() {
             .is_err()
     );
     fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn codex_hook_inputs_accept_current_wire_fields_and_ignore_unknown_ones() {
+    use longrun::hook::input::{PostToolUseInput, SessionStartInput};
+
+    let pre: PreToolUseInput = serde_json::from_value(serde_json::json!({
+        "session_id": "session",
+        "turn_id": "turn",
+        "agent_id": "agent",
+        "agent_type": "worker",
+        "transcript_path": null,
+        "cwd": "/tmp",
+        "hook_event_name": "PreToolUse",
+        "model": "gpt-test",
+        "permission_mode": "workspace-write",
+        "tool_name": "Bash",
+        "tool_input": {"command": "echo ok"},
+        "tool_use_id": "tool",
+        "future_field": true
+    }))
+    .expect("pre input");
+    assert_eq!(pre.common.agent_id.as_deref(), Some("agent"));
+    assert_eq!(pre.bash_command(), Some("echo ok"));
+
+    let post: PostToolUseInput = serde_json::from_value(serde_json::json!({
+        "session_id": "session",
+        "turn_id": "turn",
+        "transcript_path": "/tmp/transcript.jsonl",
+        "cwd": "/tmp",
+        "hook_event_name": "PostToolUse",
+        "model": "gpt-test",
+        "permission_mode": "workspace-write",
+        "tool_name": "Bash",
+        "tool_input": {"command": "echo ok"},
+        "tool_response": {"output": "LONGRUN_RECEIPT_V1 ignored"},
+        "tool_use_id": "tool"
+    }))
+    .expect("post input");
+    assert_eq!(
+        post.common.transcript_path.as_deref(),
+        Some(std::path::Path::new("/tmp/transcript.jsonl"))
+    );
+    assert!(post.tool_response.is_object());
+
+    let session: SessionStartInput = serde_json::from_value(serde_json::json!({
+        "session_id": "session",
+        "transcript_path": null,
+        "cwd": "/tmp",
+        "hook_event_name": "SessionStart",
+        "model": "gpt-test",
+        "permission_mode": "workspace-write",
+        "source": "resume"
+    }))
+    .expect("session input");
+    assert_eq!(session.source, "resume");
+    assert!(serde_json::from_value::<PreToolUseInput>(serde_json::json!({})).is_err());
+}
+
+#[test]
+fn codex_hook_outputs_use_current_wire_shape() {
+    use longrun::hook::output::{PostToolUseOutput, PreToolUseOutput, SessionStartOutput};
+
+    assert_eq!(
+        serde_json::to_value(PreToolUseOutput::allow("longrun submit".into()))
+            .expect("allow output"),
+        serde_json::json!({
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "allow",
+                "updatedInput": {"command": "longrun submit"}
+            }
+        })
+    );
+    assert_eq!(
+        serde_json::to_value(PreToolUseOutput::deny("no")).expect("deny output"),
+        serde_json::json!({
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": "no"
+            }
+        })
+    );
+    assert_eq!(
+        serde_json::to_value(PostToolUseOutput::completed("result".into())).expect("post output"),
+        serde_json::json!({
+            "continue": false,
+            "systemMessage": "Longrun completed the submitted command.",
+            "hookSpecificOutput": {
+                "hookEventName": "PostToolUse",
+                "additionalContext": "result"
+            }
+        })
+    );
+    assert_eq!(
+        serde_json::to_value(SessionStartOutput::context("recovered".into()))
+            .expect("session output"),
+        serde_json::json!({
+            "hookSpecificOutput": {
+                "hookEventName": "SessionStart",
+                "additionalContext": "recovered"
+            }
+        })
+    );
 }
 
 #[test]

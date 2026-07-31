@@ -85,8 +85,8 @@ call, and one same-turn bounded completion result.
 ### Implementation for User Story 1
 
 - [X] T024 [US1] Implement canonical receipt payload encoding, exact-byte HMAC signing, verification, expiry, and zeroized secret handling in `src/receipt.rs`
-- [ ] T025 [US1] Implement Codex common, PreToolUse, PostToolUse, and SessionStart input deserialization in `src/hook/input.rs`
-- [ ] T026 [US1] Implement Codex allow/deny, continue, system-message, and additional-context output serialization in `src/hook/output.rs`
+- [X] T025 [US1] Implement Codex common, PreToolUse, PostToolUse, and SessionStart input deserialization in `src/hook/input.rs`
+- [X] T026 [US1] Implement Codex allow/deny, continue, system-message, and additional-context output serialization in `src/hook/output.rs`
 - [X] T027 [US1] Implement strict absolute-binary submission parsing and shell-composition rejection in `src/hook/pre_tool_use.rs`
 - [X] T028 [US1] Implement one-time hook-token creation, pending-state persistence, targeted updatedInput generation, and wrapper-only allow output in `src/hook/pre_tool_use.rs`
 - [X] T029 [US1] Implement hidden hook-token claim and receipt-only stdout for `longrun submit` and `submit-shell` in `src/cli.rs`

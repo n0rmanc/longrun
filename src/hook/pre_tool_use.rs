@@ -20,15 +20,18 @@ pub fn handle_pre_tool_use(
     store: &mut Store,
     now_ms: i64,
 ) -> Result<Option<PreToolUseOutput>> {
-    if input.hook_event_name != "PreToolUse" || input.tool_name != "Bash" {
+    if input.common.hook_event_name != "PreToolUse" || input.tool_name != "Bash" {
         return Ok(None);
     }
+    let Some(command) = input.bash_command() else {
+        return Ok(None);
+    };
     let expected_binary = expected_binary
         .to_str()
         .ok_or_else(|| Error::Unavailable("Longrun executable path is not UTF-8".into()))?;
-    let words = match parse_strict_shell_words(&input.tool_input.command) {
+    let words = match parse_strict_shell_words(command) {
         Ok(words) => words,
-        Err(error) if input.tool_input.command.contains(expected_binary) => {
+        Err(error) if command.contains(expected_binary) => {
             return Ok(Some(PreToolUseOutput::deny(format!(
                 "Invalid Longrun submission: {error}"
             ))));
@@ -105,10 +108,10 @@ pub fn handle_pre_tool_use(
             .as_bytes(),
     );
     let pending = PendingSubmission {
-        session_id: input.session_id.clone(),
+        session_id: input.common.session_id.clone(),
         turn_id: input.turn_id.clone(),
         tool_use_id: input.tool_use_id.clone(),
-        cwd: NativeString::from_os_string(input.cwd.clone().into_os_string()),
+        cwd: NativeString::from_os_string(input.common.cwd.clone().into_os_string()),
         binary_path: NativeString {
             encoding: crate::protocol::NativeEncoding::Utf8,
             value: expected_binary.into(),

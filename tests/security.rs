@@ -4,7 +4,7 @@ mod unix {
 
     use longrun::{
         hook::{
-            input::{BashInput, PreToolUseInput},
+            input::{CodexCommonInput, PreToolUseInput},
             pre_tool_use::handle_pre_tool_use,
         },
         store::Store,
@@ -39,15 +39,20 @@ mod unix {
 
     fn pre_tool_use(command: &str) -> PreToolUseInput {
         PreToolUseInput {
-            session_id: "session".into(),
+            common: CodexCommonInput {
+                session_id: "session".into(),
+                agent_id: None,
+                agent_type: None,
+                transcript_path: None,
+                cwd: std::env::current_dir().expect("cwd"),
+                hook_event_name: "PreToolUse".into(),
+                model: "gpt-test".into(),
+                permission_mode: "default".into(),
+            },
             turn_id: "turn".into(),
             tool_use_id: "tool".into(),
-            cwd: std::env::current_dir().expect("cwd"),
-            hook_event_name: "PreToolUse".into(),
             tool_name: "Bash".into(),
-            tool_input: BashInput {
-                command: command.into(),
-            },
+            tool_input: serde_json::json!({ "command": command }),
         }
     }
 

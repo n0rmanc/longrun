@@ -199,3 +199,20 @@ commits required by the constitution.
   0 and final JSON reported `cancelled` / `delivered_in_turn`.
 - Review: GC validates every stored log path remains inside Longrun's log
   directory before deletion, then deletes database records only after logs.
+
+## Codex Hook Wire Compatibility
+
+- 2026-07-31: completed the current Codex common, PreToolUse, PostToolUse, and
+  SessionStart wire deserializers. Hook outputs now share Codex's universal
+  `continue`, `systemMessage`, and `suppressOutput` shape while retaining
+  typed allow/deny and additional-context envelopes. PostToolUse accepts only
+  a string response or a structured string `output` member, then still
+  requires one signed, context-matching receipt.
+- Focused checks: `cargo test --locked --test hooks`; `cargo test --locked
+  --test security`; receipt-shape unit test; `cargo fmt --check`; and `cargo
+  clippy --all-targets -- -D warnings`. An isolated live flow ran
+  PreToolUse → rewritten `submit` → structured PostToolUse through a fake
+  `codex sandbox` and returned the same-turn completion envelope.
+- Review: generic `tool_input` avoids failing unrelated tools, structured
+  receipt extraction does not scan arbitrary object fields, and only the
+  existing receipt/context verification can authorize worker execution.

@@ -13,10 +13,13 @@ Every hook command uses the absolute installed Longrun executable path.
 
 ## Common validation
 
-Every hook input must contain the documented event name, session identifier,
-working directory, and event-specific fields. Unknown fields are ignored for
-forward compatibility. Missing required fields fail closed for a recognized
-Longrun submission and are no-ops for unrelated tools.
+Codex hook inputs use snake_case. `PreToolUse` and `PostToolUse` require
+`session_id`, `turn_id`, `transcript_path` (a string or `null`), `cwd`,
+`hook_event_name`, `model`, `permission_mode`, `tool_name`, `tool_input`, and
+`tool_use_id`; `agent_id` and `agent_type` are optional. `SessionStart`
+requires the common session fields without `turn_id`, plus `source`. Unknown
+fields are ignored for forward compatibility. Missing required fields fail
+closed for a recognized Longrun submission and are no-ops for unrelated tools.
 
 ## PreToolUse
 
@@ -26,9 +29,12 @@ Required input fields:
 {
   "session_id": "thread-id",
   "turn_id": "turn-id",
+  "transcript_path": null,
   "tool_use_id": "tool-call-id",
   "cwd": "/absolute/project",
   "hook_event_name": "PreToolUse",
+  "model": "gpt-5.6",
+  "permission_mode": "workspace-write",
   "tool_name": "Bash",
   "tool_input": {
     "command": "\"/absolute/path/longrun\" submit -- cargo test"
@@ -81,7 +87,8 @@ Required fields are the PreToolUse context plus `tool_response`.
 Behavior:
 
 1. No-op unless a matching pending submission exists.
-2. Extract exactly one `LONGRUN_RECEIPT_V1` line.
+2. Extract exactly one `LONGRUN_RECEIPT_V1` line from the documented text
+   response or the text `output` member of a structured response.
 3. Verify signature, freshness, job fields, session, turn, tool use, cwd,
    binary path, and command hash.
 4. Consume the pending submission and create the job atomically.
