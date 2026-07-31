@@ -25,7 +25,7 @@ async fn run() -> longrun::error::Result<ExitCode> {
         .unwrap_or_else(|| paths.config_dir.join("config.toml"));
     let config = Config::load(&config_path)?;
     init_tracing(&config.diagnostics.log_level);
-    cli::dispatch(cli, &paths, &config).await
+    cli::dispatch(cli, &paths, &config, &config_path).await
 }
 
 #[tokio::main]

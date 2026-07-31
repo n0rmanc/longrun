@@ -2,6 +2,7 @@ use std::{
     fs::{self, OpenOptions},
     io::Write,
     path::Path,
+    time::Duration,
 };
 
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
@@ -39,17 +40,17 @@ pub struct DeliveryLease {
 
 impl Store {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        let mut store = Self {
-            connection: Connection::open(path)?,
-        };
+        let connection = Connection::open(path)?;
+        connection.busy_timeout(Duration::from_secs(5))?;
+        let mut store = Self { connection };
         store.migrate()?;
         Ok(store)
     }
 
     pub fn open_in_memory() -> Result<Self> {
-        let mut store = Self {
-            connection: Connection::open_in_memory()?,
-        };
+        let connection = Connection::open_in_memory()?;
+        connection.busy_timeout(Duration::from_secs(5))?;
+        let mut store = Self { connection };
         store.migrate()?;
         Ok(store)
     }
@@ -57,9 +58,21 @@ impl Store {
     pub fn migrate(&mut self) -> Result<()> {
         self.connection.execute_batch(
             "PRAGMA foreign_keys = ON;
-             PRAGMA journal_mode = WAL;
              PRAGMA synchronous = FULL;",
         )?;
+        let current_version: i64 = self
+            .connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        if current_version == 3 {
+            return Ok(());
+        }
+        if current_version > 3 {
+            return Err(Error::Unavailable(
+                "Longrun state schema is newer than this binary".into(),
+            ));
+        }
+        self.connection
+            .execute_batch("PRAGMA journal_mode = WAL;")?;
         let transaction = self.connection.transaction()?;
         transaction.execute_batch(
             "CREATE TABLE IF NOT EXISTS pending_submissions (
@@ -120,8 +133,7 @@ impl Store {
                 updated_at_ms INTEGER NOT NULL
              );",
         )?;
-        let mut version: i64 =
-            transaction.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        let mut version = current_version;
         let fresh_schema = version == 0;
         if version < 2 {
             if version == 1 {
@@ -369,6 +381,25 @@ impl Store {
             |row| row.get(0),
         )?;
         Ok(serde_json::from_str(&specification)?)
+    }
+
+    pub fn accepted_durable_jobs(&self) -> Result<Vec<JobSpecification>> {
+        let mut statement = self.connection.prepare(
+            "SELECT jobs.spec_json
+             FROM jobs JOIN executions USING (job_id)
+             WHERE executions.state = 'accepted'",
+        )?;
+        let jobs = statement
+            .query_map([], |row| row.get::<_, String>(0))?
+            .map(|row| {
+                let specification = row?;
+                Ok(serde_json::from_str::<JobSpecification>(&specification)?)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(jobs
+            .into_iter()
+            .filter(|job| job.execution_mode == crate::protocol::ExecutionMode::Durable)
+            .collect())
     }
 
     pub fn claim_execution(&mut self, job_id: Uuid, claim: &str) -> Result<JobSpecification> {

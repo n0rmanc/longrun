@@ -25,6 +25,7 @@ use crate::{
     },
     receipt::{ReceiptPayload, ReceiptSigner},
     store::Store,
+    supervisor::Supervisor,
     worker::run_worker,
 };
 
@@ -242,7 +243,13 @@ pub struct InternalArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum InternalCommand {
-    Worker { job_id: Uuid },
+    Worker {
+        job_id: Uuid,
+        #[arg(long, hide = true)]
+        state_dir: Option<PathBuf>,
+        #[arg(long, hide = true)]
+        log_dir: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -269,7 +276,12 @@ pub enum CodexHookCommand {
     SessionStart,
 }
 
-pub async fn dispatch(cli: Cli, paths: &AppPaths, config: &Config) -> Result<ExitCode> {
+pub async fn dispatch(
+    cli: Cli,
+    paths: &AppPaths,
+    config: &Config,
+    config_path: &std::path::Path,
+) -> Result<ExitCode> {
     match cli.command {
         Command::Submit(arguments) => submit(arguments, paths, config),
         Command::SubmitShell(arguments) => submit_shell(arguments, paths, config),
@@ -283,6 +295,7 @@ pub async fn dispatch(cli: Cli, paths: &AppPaths, config: &Config) -> Result<Exi
         Command::Logs(arguments) => logs(arguments, paths).await,
         Command::Cancel(arguments) => cancel(arguments, paths, config),
         Command::Gc(arguments) => gc(arguments, paths, config),
+        Command::Daemon(arguments) => daemon(arguments, paths, config, config_path).await,
         command => Err(Error::Unavailable(format!(
             "`longrun {}` is not available until the runtime is initialized",
             command.name()
@@ -580,17 +593,54 @@ async fn execute_direct(
 
 async fn internal(arguments: InternalArgs, paths: &AppPaths, config: &Config) -> Result<ExitCode> {
     match arguments.command {
-        InternalCommand::Worker { job_id } => {
+        InternalCommand::Worker {
+            job_id,
+            state_dir,
+            log_dir,
+        } => {
+            let mut worker_paths = paths.clone();
+            match (state_dir, log_dir) {
+                (Some(state_dir), Some(log_dir)) => {
+                    worker_paths.state_dir = state_dir;
+                    worker_paths.log_dir = log_dir;
+                }
+                (None, None) => {}
+                _ => {
+                    return Err(Error::InvalidInput(
+                        "internal worker requires both --state-dir and --log-dir".into(),
+                    ));
+                }
+            }
             let result = run_worker(
                 job_id,
-                &paths.state_dir.join("longrun.sqlite"),
+                &worker_paths.state_dir.join("longrun.sqlite"),
                 config,
-                paths,
+                &worker_paths,
             )
             .await?;
             Ok(result_exit_code(&result))
         }
     }
+}
+
+async fn daemon(
+    _arguments: DaemonArgs,
+    paths: &AppPaths,
+    config: &Config,
+    config_path: &std::path::Path,
+) -> Result<ExitCode> {
+    let worker_path = std::env::var_os("PATH")
+        .ok_or_else(|| Error::Unavailable("PATH is unavailable for Longrun workers".into()))?;
+    Supervisor::new(
+        paths.clone(),
+        config,
+        std::env::current_exe()?,
+        config_path.into(),
+        worker_path,
+    )?
+    .run()
+    .await?;
+    Ok(ExitCode::SUCCESS)
 }
 
 async fn render_direct_result(result: &crate::protocol::JobResult, json: bool) -> Result<ExitCode> {
