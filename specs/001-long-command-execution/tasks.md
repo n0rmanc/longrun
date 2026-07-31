@@ -209,7 +209,7 @@ restart the session, and observe exactly one recovery delivery.
 - [X] T066 [US4] Implement length-prefixed JSON request, response, and event framing in `src/ipc/mod.rs`
 - [X] T067 [US4] Implement per-user Unix-domain socket server and client transport in `src/ipc/unix.rs`
 - [X] T068 [US4] Implement per-user Windows named-pipe server and client transport in `src/ipc/windows.rs`
-- [ ] T069 [US4] Implement durable supervisor ownership, concurrency limits, completion events, and health in `src/supervisor.rs`
+- [X] T069 [US4] Implement durable supervisor ownership, concurrency limits, completion events, and health in `src/supervisor.rs`
 - [ ] T070 [US4] Implement durable submit, wait, status, logs, cancel, and gc routing through the shared runtime in `src/supervisor.rs`
 - [X] T071 [US4] Implement delivery leases, lease expiry, session locks, attempt budgets, and atomic delivery marking in `src/store.rs`
 - [X] T072 [US4] Implement ordered active-hook then SessionStart recovery with stable idempotency envelopes in `src/hook/session_start.rs`

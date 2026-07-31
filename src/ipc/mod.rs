@@ -3,7 +3,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::{
     error::{Error, Result},
-    protocol::PROTOCOL_VERSION,
+    protocol::{IpcEvent, IpcRequest, IpcResponse, PROTOCOL_VERSION},
 };
 
 #[cfg(unix)]
@@ -44,6 +44,27 @@ where
     writer.write_all(&payload).await?;
     writer.flush().await?;
     Ok(())
+}
+
+pub async fn read_response<R>(reader: &mut R, request: &IpcRequest) -> Result<IpcResponse>
+where
+    R: AsyncRead + Unpin,
+{
+    loop {
+        let message: serde_json::Value = read_frame(reader).await?;
+        if let Ok(event) = serde_json::from_value::<IpcEvent>(message.clone()) {
+            validate_protocol_version(event.protocol_version)?;
+            continue;
+        }
+        let response: IpcResponse = serde_json::from_value(message)?;
+        validate_protocol_version(response.protocol_version)?;
+        if response.request_id != request.request_id {
+            return Err(Error::InvalidInput(
+                "IPC response request_id does not match request".into(),
+            ));
+        }
+        return Ok(response);
+    }
 }
 
 pub fn validate_protocol_version(version: u32) -> Result<()> {

@@ -22,8 +22,8 @@ use crate::{
     ipc::{read_frame, validate_protocol_version, write_frame},
     paths::AppPaths,
     protocol::{
-        ExecutionMode, ExecutionState, IpcError, IpcMethod, IpcRequest, IpcResponse, JobResult,
-        JobSpecification, NativeString, PROTOCOL_VERSION,
+        ExecutionMode, ExecutionState, IpcError, IpcEvent, IpcEventKind, IpcMethod, IpcRequest,
+        IpcResponse, JobResult, JobSpecification, NativeString, PROTOCOL_VERSION,
     },
     store::Store,
 };
@@ -338,7 +338,21 @@ impl Supervisor {
     {
         let request: IpcRequest = read_frame(&mut stream).await?;
         let response = match self.handle_request(&request).await {
-            Ok(result) => response_ok(request.request_id, result),
+            Ok(result) => {
+                if request.method == IpcMethod::Wait {
+                    write_frame(
+                        &mut stream,
+                        &IpcEvent {
+                            protocol_version: PROTOCOL_VERSION,
+                            job_id: job_id(&request.params)?,
+                            event: IpcEventKind::Completed,
+                            payload: result.clone(),
+                        },
+                    )
+                    .await?;
+                }
+                response_ok(request.request_id, result)
+            }
             Err(error) => response_error(request.request_id, &error),
         };
         write_frame(&mut stream, &response).await

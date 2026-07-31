@@ -256,9 +256,7 @@ async fn supervisor_recovers_accepted_jobs_and_starts_each_durable_job_once() {
     let resumed_status = longrun::supervisor::wait(&paths, resumed.job_id)
         .await
         .expect("wait resumed");
-    let submitted_status = longrun::supervisor::wait(&paths, submitted.job_id)
-        .await
-        .expect("wait submitted");
+    let submitted_status = wait_for_completed_event(&paths, submitted.job_id).await;
     assert_eq!(resumed_status.execution_state, ExecutionState::Succeeded);
     assert_eq!(submitted_status.execution_state, ExecutionState::Succeeded);
     assert_eq!(
@@ -404,6 +402,28 @@ async fn wait_for_socket(socket: &std::path::Path) {
         sleep(Duration::from_millis(10)).await;
     }
     panic!("supervisor socket was not created");
+}
+
+#[cfg(unix)]
+async fn wait_for_completed_event(paths: &AppPaths, job_id: Uuid) -> longrun::store::JobStatus {
+    let mut stream = tokio::net::UnixStream::connect(&paths.socket_path)
+        .await
+        .expect("wait connection");
+    let request = IpcRequest {
+        protocol_version: PROTOCOL_VERSION,
+        request_id: Uuid::now_v7(),
+        method: IpcMethod::Wait,
+        params: serde_json::json!({ "job_id": job_id }),
+    };
+    write_frame(&mut stream, &request)
+        .await
+        .expect("wait request");
+    let event: IpcEvent = read_frame(&mut stream).await.expect("completion event");
+    assert_eq!(event.job_id, job_id);
+    assert_eq!(event.event, IpcEventKind::Completed);
+    let response: IpcResponse = read_frame(&mut stream).await.expect("wait response");
+    assert!(response.ok);
+    serde_json::from_value(response.result.expect("wait result")).expect("job status")
 }
 
 async fn round_trip<T>(message: &T)

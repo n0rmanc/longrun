@@ -376,3 +376,19 @@ commits required by the constitution.
 - Review: worker heartbeats are only liveness evidence. They may prevent a
   premature failure record but never authorize re-execution; stale recovery
   records failure rather than risking a second requested-command spawn.
+
+## Supervisor Completion Events
+
+- 2026-07-31: a `wait` IPC client now receives a protocol-versioned
+  `completed` event containing the stored terminal status before its matching
+  response. The normal request client validates and skips event frames until it
+  receives the response for its request ID.
+- Focused checks: the real Unix supervisor test reads the `completed` event
+  frame followed by the matching response, while health, ownership, recovery,
+  and configured concurrency continue to use the same worker-only execution
+  path.
+- Live check: a disposable durable `printf event` run received its succeeded
+  result through the normal CLI after the supervisor sent the completion event.
+- Review: completion notification is metadata from persisted state. It cannot
+  grant command authority, and no event or IPC handler can spawn a requested
+  command directly.
