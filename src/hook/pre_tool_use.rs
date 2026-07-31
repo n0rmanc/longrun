@@ -121,6 +121,7 @@ pub fn handle_pre_tool_use(
         expires_at_ms: now_ms.saturating_add(PENDING_TTL_MS),
         state: PendingState::Pending,
     };
+    store.cleanup_expired_pending(now_ms)?;
     store.save_pending(&pending)?;
 
     let mut rewritten = Vec::with_capacity(words.len() + 2);

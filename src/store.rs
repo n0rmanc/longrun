@@ -165,12 +165,23 @@ impl Store {
         Ok(())
     }
 
+    pub fn cleanup_expired_pending(&mut self, now_ms: i64) -> Result<usize> {
+        Ok(self.connection.execute(
+            "DELETE FROM pending_submissions WHERE expires_at_ms <= ?1",
+            [now_ms],
+        )?)
+    }
+
     pub fn claim_pending_by_token(
         &mut self,
         token_hash: &str,
         now_ms: i64,
     ) -> Result<PendingSubmission> {
         let transaction = self.connection.transaction()?;
+        transaction.execute(
+            "DELETE FROM pending_submissions WHERE expires_at_ms <= ?1",
+            [now_ms],
+        )?;
         let mut statement = transaction.prepare(
             "SELECT tool_use_id, payload_json FROM pending_submissions
              WHERE state = 'pending' AND expires_at_ms > ?1",
@@ -220,6 +231,7 @@ impl Store {
         tool_use_id: &str,
         nonce: &str,
         job: &JobSpecification,
+        now_ms: i64,
     ) -> Result<()> {
         let transaction = self.connection.transaction()?;
         let payload: String = transaction.query_row(
@@ -232,6 +244,9 @@ impl Store {
             return Err(Error::Denied(
                 "pending submission has not been claimed exactly once".into(),
             ));
+        }
+        if pending.expires_at_ms <= now_ms {
+            return Err(Error::Denied("pending submission has expired".into()));
         }
         if !pending.matches_job(job) {
             return Err(Error::Denied(

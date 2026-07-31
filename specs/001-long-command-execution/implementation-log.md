@@ -153,3 +153,15 @@ commits required by the constitution.
 - Review: the runner retains the cleanup owner until process exit and kills
   the just-spawned child if Job Object assignment fails; no timeout path
   bypasses platform cleanup.
+
+## Receipt Expiry and Replay Cleanup
+
+- 2026-07-31: completed receipt cleanup enforcement. HMAC verification stays
+  on RustCrypto's constant-time `verify_slice` path, consumed nonces remain
+  uniquely persisted, and expired pending submissions are deleted before a
+  verified hook creates new state.
+- Focused checks: a tampered receipt fails verification; an expired pending
+  row is removed while an unexpired row remains; receipt issuance now shares
+  the pending submission's original expiry instead of extending it.
+- Review: PostToolUse rechecks expiry inside its transaction boundary, so an
+  expired claimed submission cannot create a job even if it was read earlier.

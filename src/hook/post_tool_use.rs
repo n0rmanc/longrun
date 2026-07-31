@@ -28,6 +28,9 @@ pub async fn handle_post_tool_use(
     };
     let database = paths.state_dir.join("longrun.sqlite");
     let mut store = Store::open(&database)?;
+    let now = OffsetDateTime::now_utc();
+    let now_ms = now.unix_timestamp_nanos().div_euclid(1_000_000) as i64;
+    store.cleanup_expired_pending(now_ms)?;
     let pending = match store.pending(&input.tool_use_id) {
         Ok(pending) => pending,
         Err(_) => return Ok(None),
@@ -41,9 +44,9 @@ pub async fn handle_post_tool_use(
         cwd: crate::protocol::NativeString::from_os_string(input.cwd.clone().into_os_string()),
         command_hash: pending.command_hash.clone(),
     };
-    let payload = receipt.verify(&signer, &expected, OffsetDateTime::now_utc())?;
+    let payload = receipt.verify(&signer, &expected, now)?;
     let job = payload.to_job_specification()?;
-    store.consume_pending_and_create_job(&input.tool_use_id, &payload.nonce, &job)?;
+    store.consume_pending_and_create_job(&input.tool_use_id, &payload.nonce, &job, now_ms)?;
     drop(store);
     let result = run_worker_with_runner(job.job_id, &database, config, paths, runner).await?;
     Ok(Some(PostToolUseOutput {

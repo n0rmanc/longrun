@@ -6,7 +6,7 @@ use std::{
 };
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use time::{Duration, OffsetDateTime, format_description::well_known::Rfc3339};
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use uuid::Uuid;
 
 use crate::{
@@ -659,6 +659,13 @@ fn issue_submission(
     }
     let signer = ReceiptSigner::load_or_create(&paths.state_dir.join("receipt.key"))?;
     let issued = OffsetDateTime::now_utc();
+    let expires = OffsetDateTime::from_unix_timestamp_nanos(
+        i128::from(pending.expires_at_ms).saturating_mul(1_000_000),
+    )
+    .map_err(|error| Error::Unavailable(format!("invalid pending expiry: {error}")))?;
+    if expires <= issued {
+        return Err(Error::Denied("hook token has expired".into()));
+    }
     let payload = ReceiptPayload::from_job(
         job,
         pending.session_id,
@@ -667,11 +674,9 @@ fn issue_submission(
         issued
             .format(&Rfc3339)
             .map_err(|error| Error::Unavailable(format!("cannot format receipt time: {error}")))?,
-        (issued + Duration::minutes(5))
-            .format(&Rfc3339)
-            .map_err(|error| {
-                Error::Unavailable(format!("cannot format receipt expiry: {error}"))
-            })?,
+        expires.format(&Rfc3339).map_err(|error| {
+            Error::Unavailable(format!("cannot format receipt expiry: {error}"))
+        })?,
         ReceiptSigner::random_nonce()?,
     );
     let line = signer.issue(&payload)?.to_line();

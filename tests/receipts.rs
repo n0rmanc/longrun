@@ -1,7 +1,10 @@
 use std::ffi::OsString;
 
 use longrun::{
-    protocol::{EnvironmentPolicy, ExecutionMode, JobSpecification, NativeString, ShellMode},
+    protocol::{
+        EnvironmentPolicy, ExecutionMode, JobSpecification, NativeEncoding, NativeString,
+        PendingState, PendingSubmission, ShellMode,
+    },
     receipt::{ReceiptExpectation, ReceiptPayload, ReceiptSigner},
     store::Store,
 };
@@ -33,6 +36,26 @@ fn payload(expires_at: &str) -> ReceiptPayload {
         expires_at,
         "nonce",
     )
+}
+
+fn pending(tool_use_id: &str, expires_at_ms: i64) -> PendingSubmission {
+    PendingSubmission {
+        session_id: "session".into(),
+        turn_id: "turn".into(),
+        tool_use_id: tool_use_id.into(),
+        cwd: NativeString::from_os_string(std::env::current_dir().expect("cwd").into_os_string()),
+        binary_path: NativeString {
+            encoding: NativeEncoding::Utf8,
+            value: "/opt/longrun".into(),
+        },
+        expected_program: NativeString::from_os_string(OsString::from("echo")),
+        expected_args: vec![NativeString::from_os_string(OsString::from("done"))],
+        command_hash: "sha256:test".into(),
+        hook_token_hash: "sha256:token".into(),
+        created_at_ms: 1,
+        expires_at_ms,
+        state: PendingState::Pending,
+    }
 }
 
 #[test]
@@ -91,4 +114,33 @@ fn receipt_nonces_are_consumed_once() {
 
     store.consume_receipt_once("nonce").expect("first consume");
     assert!(store.consume_receipt_once("nonce").is_err());
+}
+
+#[test]
+fn tampered_receipts_and_expired_pending_submissions_are_rejected() {
+    let signer = ReceiptSigner::new([3; 32]);
+    let payload = payload("2099-01-01T00:00:00Z");
+    let mut line = signer.issue(&payload).expect("issue").to_line();
+    let last = line.pop().expect("signature character");
+    line.push(if last == 'A' { 'B' } else { 'A' });
+    let receipt = signer.parse(&line).expect("parse tampered receipt");
+    assert!(
+        receipt
+            .verify(
+                &signer,
+                &ReceiptExpectation::from_payload(&payload),
+                OffsetDateTime::now_utc(),
+            )
+            .is_err()
+    );
+
+    let mut store = Store::open_in_memory().expect("store");
+    store.save_pending(&pending("expired", 1)).expect("expired");
+    store.save_pending(&pending("fresh", 3)).expect("fresh");
+    assert_eq!(store.cleanup_expired_pending(2).expect("cleanup"), 1);
+    assert!(store.pending("expired").is_err());
+    assert_eq!(
+        store.pending("fresh").expect("fresh").state,
+        PendingState::Pending
+    );
 }
