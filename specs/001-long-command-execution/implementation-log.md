@@ -116,3 +116,15 @@ commits required by the constitution.
 - Review: the runner consumes the job's signed policy rather than mutable
   ambient configuration, so hook-receipted and direct jobs share one exact
   inheritance rule.
+
+## Sandbox Fail-Closed Policy
+
+- 2026-07-31: centralized permission-profile policy in configuration. The
+  `:danger-full-access` profile requires both its explicit command request and
+  `execution.allow_danger_full_access = true`; other profiles retain the
+  existing safe default.
+- Focused checks: a sandbox fixture exits 42 and proves Longrun does not run
+  the requested command directly; the default configuration rejects a
+  danger-full-access direct request before sandbox spawn.
+- Review: failure propagates as the sandbox status, with no direct-execution
+  fallback or permission-profile substitution.

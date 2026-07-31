@@ -40,3 +40,14 @@ fn secret_patterns_deny_inheritance_unless_explicitly_allowed() {
     assert!(!config.environment.allows("GITHUB_TOKEN"));
     assert!(!config.environment.allows("PATH"));
 }
+
+#[test]
+fn danger_full_access_requires_configuration_opt_in() {
+    let config = Config::default();
+    assert!(!config.permits_permission_profile(":danger-full-access"));
+    assert!(config.permits_permission_profile(":workspace"));
+
+    let config =
+        Config::from_toml("[execution]\nallow_danger_full_access = true").expect("valid config");
+    assert!(config.permits_permission_profile(":danger-full-access"));
+}

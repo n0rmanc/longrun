@@ -39,9 +39,7 @@ impl Runner {
         config: &Config,
         paths: &AppPaths,
     ) -> Result<JobResult> {
-        if job.permission_profile == ":danger-full-access"
-            && !config.execution.allow_danger_full_access
-        {
+        if !config.permits_permission_profile(&job.permission_profile) {
             return Err(Error::Denied(
                 "danger-full-access requires explicit configuration".into(),
             ));

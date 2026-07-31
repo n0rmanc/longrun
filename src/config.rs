@@ -70,6 +70,10 @@ impl Config {
         }
         Ok(())
     }
+
+    pub fn permits_permission_profile(&self, profile: &str) -> bool {
+        profile != ":danger-full-access" || self.execution.allow_danger_full_access
+    }
 }
 
 const MAX_TIMEOUT_MS: u64 = 7 * 24 * 60 * 60 * 1_000;

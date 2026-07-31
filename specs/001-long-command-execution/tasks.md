@@ -142,14 +142,14 @@ or elevated access.
 ### Tests for User Story 6
 
 - [X] T041 [P] [US6] Add failing environment allowlist, deny-pattern, and explicit secret-pass tests in `tests/security.rs`
-- [ ] T042 [P] [US6] Add failing sandbox-denial and no-escalation tests in `tests/security.rs`
+- [X] T042 [P] [US6] Add failing sandbox-denial and no-escalation tests in `tests/security.rs`
 - [ ] T043 [P] [US6] Add failing absolute-binary, PATH-shadowing, shell-metacharacter, and replay tests in `tests/security.rs`
 - [ ] T044 [P] [US6] Add failing Unix process-group and Windows Job Object cleanup tests in `tests/process_tree.rs`
 
 ### Implementation for User Story 6
 
 - [X] T045 [US6] Implement safe environment construction and explicit `--env-pass` policy in `src/runner.rs`
-- [ ] T046 [US6] Implement danger-full-access dual opt-in and fail-closed sandbox validation in `src/config.rs`
+- [X] T046 [US6] Implement danger-full-access dual opt-in and fail-closed sandbox validation in `src/config.rs`
 - [ ] T047 [US6] Implement Unix process-group creation, graceful termination, and forced group kill in `src/platform/unix.rs`
 - [ ] T048 [US6] Implement Windows Job Object creation, assignment, graceful stop, and kill-on-close in `src/platform/windows.rs`
 - [ ] T049 [US6] Route timeout, cancellation, hook shutdown, and supervisor shutdown through one process-tree cleanup interface in `src/platform/mod.rs`
