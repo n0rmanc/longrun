@@ -47,8 +47,9 @@ Codex plugin assets, and an optional per-user supervisor mode
 status lookup within 100 ms p95 for 10,000 retained jobs; bounded model output
 defaults to 32 KiB
 
-**Constraints**: Zero periodic model polling; at-most-once execution; retryable
-exactly-once-effective delivery; no silent permission escalation; full logs
+**Constraints**: Zero periodic model polling; at-most-once execution;
+effectively-once delivery with a stable idempotency identity; no silent
+permission escalation; full logs
 remain local; direct argv preserves native OS strings; all persistent changes
 must be atomic and crash-consistent
 
@@ -102,6 +103,7 @@ specs/001-long-command-execution/
 Cargo.toml
 Cargo.lock
 src/
+├── lib.rs
 ├── main.rs
 ├── cli.rs
 ├── config.rs
@@ -162,7 +164,9 @@ tests/
 │   ├── hooks/
 │   └── commands/
 └── live/
-    └── README.md
+    ├── README.md
+    ├── active_session.rs
+    └── durable_session.rs
 Formula/
 └── longrun.rb
 .github/

@@ -30,7 +30,7 @@ product-scope exclusions.
 
 **Purpose**: Establish the single-package Rust project and shared validation.
 
-- [ ] T001 Create the Rust 2024 binary package named `longrun` in `Cargo.toml` and `src/main.rs`
+- [ ] T001 Create the Rust 2024 package and binary named `longrun` in `Cargo.toml`, `src/lib.rs`, and `src/main.rs`
 - [ ] T002 Add the locked dependency set from plan.md with target-specific Unix and Windows dependencies in `Cargo.toml`
 - [ ] T003 [P] Define shared error types and process exit-code mapping in `src/error.rs`
 - [ ] T004 [P] Define OS-specific application, state, log, socket, and integration paths in `src/paths.rs`
@@ -80,7 +80,7 @@ call, and one same-turn bounded completion result.
 - [ ] T020 [P] [US1] Add failing receipt encode, HMAC, expiry, mismatch, and single-consumption tests in `tests/receipts.rs`
 - [ ] T021 [P] [US1] Add failing PreToolUse no-op, strict-path, shell-rejection, token-rewrite, and wrapper-allow tests in `tests/hooks.rs`
 - [ ] T022 [P] [US1] Add failing PostToolUse receipt extraction, pending-context match, same-turn output, and duplicate-call tests in `tests/hooks.rs`
-- [ ] T023 [P] [US1] Add a zero-poll 90-second active-hook test harness in `tests/live/active_session.rs`
+- [ ] T023 [P] [US1] Add a parameterized active-hook live harness with a 90-second smoke and 30-minute SC-001 acceptance mode in `tests/live/active_session.rs`
 
 ### Implementation for User Story 1
 
@@ -246,12 +246,12 @@ value.
 - [ ] T086 [US5] Implement repair and preservation-safe plugin/marketplace uninstall in `src/integration/codex.rs`
 - [ ] T087 [US5] Implement doctor diagnostics and human/JSON reports in `src/integration/codex.rs`
 - [ ] T088 [US5] Wire `init --codex`, `uninstall --codex`, and `doctor` commands in `src/cli.rs`
-- [ ] T089 [US5] Run isolated-Codex-home install/repair/uninstall live tests, review the diff, and record evidence in `specs/001-long-command-execution/implementation-log.md`
+- [ ] T089 [US5] Run timed isolated-Codex-home install/doctor/repair/uninstall live tests proving SC-009, review the diff, and record evidence in `specs/001-long-command-execution/implementation-log.md`
 - [ ] T090 [P] [US5] Add failing platform selection, archive layout, and checksum verification tests in `tests/install.rs`
 - [ ] T091 [P] [US5] Add failing Cargo package metadata and release-artifact manifest checks in `tests/install.rs`
 - [ ] T092 [US5] Implement checksummed GitHub Release binary installation for macOS and Linux in `install.sh`
 - [ ] T093 [US5] Add the Homebrew formula using published release checksums in `Formula/longrun.rb`
-- [ ] T094 [US5] Add Cargo publishing metadata and macOS/Linux/Windows archive and checksum automation in `Cargo.toml` and `.github/workflows/release.yml`
+- [ ] T094 [US5] Add Cargo publishing metadata plus macOS/Linux/Windows archive, checksum, clean-install, and `longrun doctor` automation in `Cargo.toml` and `.github/workflows/release.yml`
 
 **Checkpoint**: Integration lifecycle is repeatable and preserves unrelated
 user state.
@@ -263,7 +263,7 @@ user state.
 **Purpose**: Prove the final architecture across interfaces and platforms.
 
 - [ ] T095 [P] Add a structured MCP status/wait/logs/cancel adapter and `longrun mcp` dispatch that delegate only to supervisor IPC in `src/mcp.rs` and `src/cli.rs`
-- [ ] T096 [P] Add MCP adapter contract tests proving no independent spawn path in `tests/supervisor.rs`
+- [ ] T096 [P] Add MCP adapter contract tests proving no independent spawn path in `tests/mcp.rs`
 - [ ] T097 [P] Add macOS, Linux, and Windows compile/test matrix configuration in `.github/workflows/ci.yml`
 - [ ] T098 [P] Add user installation, configuration, security, recovery, and command documentation in `README.md`
 - [ ] T099 Add performance tests for submit p95, hook no-op p95, status p95, completion latency, and model byte bounds in `tests/performance.rs`
@@ -365,3 +365,64 @@ T024-T032 in dependency order.
 - Every significant implementation slice ends with focused tests, a diff
   review, evidence, and a commit.
 - Full completion requires all 103 tasks, not only the first checkpoint.
+
+## Requirement Coverage
+
+This table is the authoritative task mapping used by cross-artifact analysis.
+
+| Coverage key | Tasks |
+|--------------|-------|
+| FR-001 | T001, T018, T038, T094, T098 |
+| FR-002 | T003, T034, T036-T040 |
+| FR-003 | T020, T024, T028-T029 |
+| FR-004 | T009, T013, T020, T030, T037, T100 |
+| FR-005 | T012, T034, T037 |
+| FR-006 | T023, T025, T031-T033 |
+| FR-007 | T022-T023, T031, T033 |
+| FR-008 | T004, T014-T015, T035, T037 |
+| FR-009 | T015, T022, T031, T099 |
+| FR-010 | T015, T026, T031 |
+| FR-011 | T052-T059 |
+| FR-012 | T034, T044, T047-T049 |
+| FR-013 | T009, T011, T013, T037 |
+| FR-014 | T009, T011, T013, T063, T071 |
+| FR-015 | T022, T063, T071, T100 |
+| FR-016 | T020, T024, T030, T043, T050 |
+| FR-017 | T020-T021, T024, T028, T030 |
+| FR-018 | T008, T011, T017, T027, T034, T038 |
+| FR-019 | T017, T027, T029, T038 |
+| FR-020 | T036, T042, T046 |
+| FR-021 | T010, T041, T045 |
+| FR-022 | T023, T031, T037 |
+| FR-023 | T061-T070 |
+| FR-024 | T074-T075, T078, T088-T089 |
+| FR-025 | T004, T013-T014, T058, T064, T069, T071 |
+| FR-026 | T063, T071-T072 |
+| FR-027 | T063, T072-T073 |
+| FR-028 | T012, T063, T073 |
+| FR-029 | T077-T089, T098 |
+| FR-030 | T004, T021, T027, T078, T081, T084 |
+| FR-031 | T021, T027-T028 |
+| FR-032 | T095-T096 |
+| FR-033 | T008, T011, T034, T036 |
+| FR-034 | T009, T013-T014, T064, T069, T071 |
+| FR-035 | T044, T047-T049, T062, T067-T068, T074, T097 |
+| FR-036 | T010, T012, T098 |
+| FR-037 | T004, T016, T079, T087, T089, T094, T098 |
+| FR-038 | T078, T086, T089 |
+| FR-039 | T090, T092-T094, T098 |
+| FR-040 | T002, T091, T094, T098 |
+| SC-001 | T023, T033, T101 |
+| SC-002 | T020, T022, T063, T100 |
+| SC-003 | T023, T031, T099 |
+| SC-004 | T015, T031, T039, T099 |
+| SC-005 | T044, T047-T049 |
+| SC-006 | T020, T043, T050, T100 |
+| SC-007 | T063-T065, T071-T073, T076 |
+| SC-008 | T041-T043, T045-T046, T051 |
+| SC-009 | T077-T079, T084-T089 |
+| SC-010 | T003, T034, T036-T040, T097 |
+| SC-011 | T052-T060, T070 |
+| SC-012 | T078, T086, T089 |
+| SC-013 | T090-T094 |
+| Constitution quality gates | T005-T007, T019, T033, T040, T051, T060, T076, T089, T101-T103 |

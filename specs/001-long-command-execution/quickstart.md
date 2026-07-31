@@ -54,6 +54,12 @@ generated definitions.
 
 ## Zero-poll active-session test
 
+Run the automated 90-second smoke first:
+
+```bash
+cargo test --test active_session -- --ignored --nocapture
+```
+
 Ask Codex:
 
 ```text
@@ -68,6 +74,11 @@ Expected:
 - no `write_stdin` or periodic model turn occurs during the wait;
 - the same session and turn continue after completion;
 - the result contains a bounded tail and local log paths.
+
+For SC-001 acceptance evidence, rerun the same harness with its documented
+30-minute duration option and confirm the recorded Codex event trace contains
+zero periodic completion-check model requests. The shorter run is the routine
+live smoke; it does not replace the 30-minute acceptance run.
 
 ## Receipt and replay tests
 
