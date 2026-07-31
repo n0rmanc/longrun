@@ -92,3 +92,14 @@ commits required by the constitution.
   Longrun state.
 - Review: `run` remains direct argv by default; `run-shell` stays explicitly
   configuration-gated and no CLI path bypasses the sandbox worker.
+
+## Runner Contract Completion
+
+- 2026-07-31: completed the runner contract checks: the fake sandbox now
+  records and verifies the exact `codex sandbox -P PROFILE -C CWD -- ...`
+  invocation, worker execution verifies result persistence, and the runner
+  verifies separate full stdout/stderr logs and child exit status.
+- Focused check: `cargo test --locked --test runner`; full `cargo test
+  --locked`; and `cargo clippy --all-targets -- -D warnings`.
+- Review: the test observes the actual runner-to-sandbox process boundary; it
+  does not duplicate command construction or rely on implementation internals.

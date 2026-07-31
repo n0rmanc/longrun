@@ -16,7 +16,7 @@ mod unix {
         let path = root.join("codex");
         fs::write(
             &path,
-            "#!/bin/sh\nwhile [ \"$1\" != \"--\" ]; do shift; done\nshift\nexec \"$@\"\n",
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$(dirname \"$0\")/sandbox.args\"\nwhile [ \"$1\" != \"--\" ]; do shift; done\nshift\nexec \"$@\"\n",
         )
         .expect("write fake sandbox");
         fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).expect("make executable");
@@ -46,7 +46,7 @@ mod unix {
     }
 
     #[tokio::test]
-    async fn runner_persists_separate_logs_and_child_exit_status() {
+    async fn runner_builds_sandbox_command_and_persists_separate_logs_and_child_exit_status() {
         let root = std::env::temp_dir().join(format!("longrun-runner-{}", std::process::id()));
         fs::create_dir_all(&root).expect("root");
         let paths = AppPaths {
@@ -64,6 +64,23 @@ mod unix {
             .await
             .expect("run");
 
+        assert_eq!(
+            fs::read_to_string(root.join("sandbox.args"))
+                .expect("sandbox invocation")
+                .lines()
+                .collect::<Vec<_>>(),
+            vec![
+                "sandbox",
+                "-P",
+                ":workspace",
+                "-C",
+                &std::env::current_dir().expect("cwd").display().to_string(),
+                "--",
+                "/bin/sh",
+                "-c",
+                "printf out; printf err >&2; exit 7",
+            ]
+        );
         assert_eq!(result.exit_code, Some(7));
         assert_eq!(
             fs::read_to_string(

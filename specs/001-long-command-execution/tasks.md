@@ -116,7 +116,7 @@ fixtures through `longrun run`.
 ### Tests for User Story 2
 
 - [X] T034 [P] [US2] Add failing direct-run exit-code, stdout/stderr, timeout, and non-UTF-8 argv tests in `tests/cli.rs`
-- [ ] T035 [P] [US2] Add failing process-spawn, result-persistence, and output-log tests in `tests/runner.rs`
+- [X] T035 [P] [US2] Add failing process-spawn, result-persistence, and output-log tests in `tests/runner.rs`
 
 ### Implementation for User Story 2
 
