@@ -13,10 +13,10 @@ use crate::{
     config::Config,
     error::{Error, Result},
     hook::{
-        input::PostToolUseInput,
-        input::PreToolUseInput,
+        input::{PostToolUseInput, PreToolUseInput, SessionStartInput},
         post_tool_use::handle_post_tool_use,
         pre_tool_use::{handle_pre_tool_use, now_ms},
+        session_start::handle_session_start,
     },
     output::read_log,
     paths::AppPaths,
@@ -787,9 +787,30 @@ async fn hook(arguments: HookArgs, paths: &AppPaths, config: &Config) -> Result<
                 }
                 Ok(ExitCode::SUCCESS)
             }
-            CodexHookCommand::SessionStart => Err(Error::Unavailable(
-                "Codex recovery runtime is not initialized".into(),
-            )),
+            CodexHookCommand::SessionStart => {
+                let mut source = String::new();
+                std::io::stdin().read_to_string(&mut source)?;
+                let input: SessionStartInput = serde_json::from_str(&source)?;
+                if let Some(delivery) = handle_session_start(
+                    &input,
+                    &std::env::current_exe()?,
+                    paths,
+                    config,
+                    now_ms()?,
+                )? {
+                    let mut stdout = std::io::stdout();
+                    serde_json::to_writer(&mut stdout, &delivery.output)?;
+                    stdout.write_all(b"\n")?;
+                    stdout.flush()?;
+                    Store::open(paths.state_dir.join("longrun.sqlite"))?.finish_delivery(
+                        delivery.job_id,
+                        delivery.lease_id,
+                        crate::protocol::DeliveryState::DeliveredOnStart,
+                        now_ms()?,
+                    )?;
+                }
+                Ok(ExitCode::SUCCESS)
+            }
         },
     }
 }

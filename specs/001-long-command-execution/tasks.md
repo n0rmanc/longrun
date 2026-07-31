@@ -92,8 +92,8 @@ call, and one same-turn bounded completion result.
 - [X] T029 [US1] Implement hidden hook-token claim and receipt-only stdout for `longrun submit` and `submit-shell` in `src/cli.rs`
 - [X] T030 [US1] Implement PostToolUse receipt extraction, signature/context verification, atomic consumption, and job acceptance in `src/hook/post_tool_use.rs`
 - [X] T031 [US1] Implement embedded local completion wait and `continue: false` bounded-result delivery in `src/hook/post_tool_use.rs`
-- [ ] T032 [US1] Wire `longrun hook codex pre-tool-use`, `post-tool-use`, and `session-start` dispatch in `src/hook/mod.rs`
-- [ ] T033 [US1] Run hook fixtures and the active-session harness, review the diff, and record evidence in `specs/001-long-command-execution/implementation-log.md`
+- [X] T032 [US1] Wire `longrun hook codex pre-tool-use`, `post-tool-use`, and `session-start` dispatch in `src/hook/mod.rs`
+- [X] T033 [US1] Run hook fixtures and the active-session harness, review the diff, and record evidence in `specs/001-long-command-execution/implementation-log.md`
 
 **Execution dependency**: T030, T031, and the end-to-end portion of T033
 require the single sandboxed worker from T036-T037. T024-T029 and pre-tool
@@ -212,7 +212,7 @@ restart the session, and observe exactly one recovery delivery.
 - [ ] T069 [US4] Implement durable supervisor ownership, concurrency limits, completion events, and health in `src/supervisor.rs`
 - [ ] T070 [US4] Implement durable submit, wait, status, logs, cancel, and gc routing through the shared runtime in `src/supervisor.rs`
 - [X] T071 [US4] Implement delivery leases, lease expiry, session locks, attempt budgets, and atomic delivery marking in `src/store.rs`
-- [ ] T072 [US4] Implement ordered active-hook then SessionStart recovery with stable idempotency envelopes in `src/hook/session_start.rs`
+- [X] T072 [US4] Implement ordered active-hook then SessionStart recovery with stable idempotency envelopes in `src/hook/session_start.rs`
 - [ ] T073 [US4] Implement disabled-by-default guarded `codex exec resume` recovery in `src/supervisor.rs`
 - [ ] T074 [US4] Implement launchd, systemd-user, and Windows per-user service artifact generation in `src/integration/service.rs`
 - [ ] T075 [US4] Wire `daemon` and `service install|uninstall|start|stop|status` commands in `src/cli.rs`

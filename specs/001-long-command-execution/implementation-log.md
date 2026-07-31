@@ -266,5 +266,23 @@ commits required by the constitution.
   one-second command after the lease path was added.
 - Review: expiry clears both delivery and session ownership atomically before
   another claimant can proceed. A lease cannot authorize command execution;
-  the existing worker claim remains the sole spawn authority. Supervisor
-  restart handling and SessionStart output wiring remain pending.
+  the existing worker claim remains the sole spawn authority.
+
+## SessionStart Hook Recovery
+
+- 2026-07-31: completed the `longrun hook codex session-start` dispatch and
+  ordered recovery step. It expires stale leases, finds only terminal
+  undelivered results for the current session, claims a five-minute
+  SessionStart lease, and returns the absolute Longrun submission path plus
+  the stable delivery idempotency key and bounded untrusted result context.
+- Focused checks: `cargo test --locked --test recovery` (3 passed),
+  `cargo test --locked --test hooks` (7 passed), and the ignored
+  `cargo test --locked --test session_start -- --ignored --nocapture`
+  process-level harness (1 passed). The harness calls the compiled CLI with
+  a fresh home, proves its empty-state no-op, persists a completed
+  session-targeted result, observes one recovery envelope, confirms
+  `delivered_on_start`, then confirms a second hook emits nothing.
+- Review: the CLI flushes one valid hook envelope before it marks a delivery
+  complete; a write failure or crash therefore leaves the lease retryable
+  with the original idempotency key. SessionStart handles only recovery
+  delivery and never receives command-spawn authority.

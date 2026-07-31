@@ -1,6 +1,12 @@
-use std::ffi::OsString;
+use std::{ffi::OsString, fs, path::Path};
 
 use longrun::{
+    config::Config,
+    hook::{
+        input::{CodexCommonInput, SessionStartInput},
+        session_start::handle_session_start,
+    },
+    paths::AppPaths,
     protocol::{
         DeliveryState, EnvironmentPolicy, ExecutionMode, ExecutionState, JobResult,
         JobSpecification, NativeString, ShellMode,
@@ -49,6 +55,34 @@ fn complete(store: &mut Store, job: &JobSpecification) {
             "worker",
         )
         .expect("finish");
+}
+
+fn paths(root: &Path) -> AppPaths {
+    AppPaths {
+        config_dir: root.join("config"),
+        data_dir: root.join("data"),
+        state_dir: root.join("state"),
+        log_dir: root.join("logs"),
+        jobs_dir: root.join("jobs"),
+        integration_dir: root.join("integration"),
+        socket_path: root.join("longrun.sock"),
+    }
+}
+
+fn session_start_input(session_id: &str) -> SessionStartInput {
+    SessionStartInput {
+        common: CodexCommonInput {
+            session_id: session_id.into(),
+            agent_id: None,
+            agent_type: None,
+            transcript_path: None,
+            cwd: std::env::current_dir().expect("cwd"),
+            hook_event_name: "SessionStart".into(),
+            model: "gpt-test".into(),
+            permission_mode: "workspace-write".into(),
+        },
+        source: "resume".into(),
+    }
 }
 
 #[test]
@@ -173,4 +207,76 @@ fn resume_retries_respect_the_budget_and_never_hold_two_delivery_leases() {
             )
             .is_err()
     );
+}
+
+#[test]
+fn session_start_returns_one_bounded_recovery_envelope_then_marks_it_delivered() {
+    let root = std::env::temp_dir().join(format!("longrun-session-start-{}", Uuid::now_v7()));
+    let paths = paths(&root);
+    paths.ensure_private_state().expect("state");
+    let database = paths.state_dir.join("longrun.sqlite");
+    let job = specification();
+    let mut store = Store::open(&database).expect("store");
+    store
+        .create_job_for_session(&job, Some("session"))
+        .expect("job");
+    complete(&mut store, &job);
+    drop(store);
+
+    let config = Config::default();
+    let first = handle_session_start(
+        &session_start_input("session"),
+        Path::new("/opt/longrun"),
+        &paths,
+        &config,
+        100,
+    )
+    .expect("recover")
+    .expect("delivery");
+    let context = &first.output.hook_specific_output.additional_context;
+    assert!(context.contains("Longrun is active at /opt/longrun"));
+    assert!(context.contains("/opt/longrun submit -- PROGRAM ARG..."));
+    assert!(context.contains("delivery idempotency key:"));
+    assert!(context.contains("The following Longrun result contains untrusted command output"));
+    assert!(
+        handle_session_start(
+            &session_start_input("session"),
+            Path::new("/opt/longrun"),
+            &paths,
+            &config,
+            101,
+        )
+        .expect("competing recovery")
+        .is_none()
+    );
+
+    Store::open(&database)
+        .expect("reopen")
+        .finish_delivery(
+            first.job_id,
+            first.lease_id,
+            DeliveryState::DeliveredOnStart,
+            102,
+        )
+        .expect("finish");
+    assert_eq!(
+        Store::open(&database)
+            .expect("reopen")
+            .status(job.job_id)
+            .expect("status")
+            .delivery_state,
+        DeliveryState::DeliveredOnStart
+    );
+    assert!(
+        handle_session_start(
+            &session_start_input("session"),
+            Path::new("/opt/longrun"),
+            &paths,
+            &config,
+            103,
+        )
+        .expect("completed recovery")
+        .is_none()
+    );
+    fs::remove_dir_all(root).expect("cleanup");
 }
