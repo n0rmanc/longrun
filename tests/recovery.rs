@@ -15,6 +15,14 @@ use longrun::{
 };
 use uuid::Uuid;
 
+#[cfg(unix)]
+use longrun::supervisor::Supervisor;
+#[cfg(unix)]
+use tokio::{
+    sync::watch,
+    time::{Duration, sleep},
+};
+
 fn specification() -> JobSpecification {
     JobSpecification {
         protocol_version: 1,
@@ -279,4 +287,192 @@ fn session_start_returns_one_bounded_recovery_envelope_then_marks_it_delivered()
         .is_none()
     );
     fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn supervisor_restart_adopts_a_heartbeating_worker_without_reexecution() {
+    use std::{os::unix::fs::PermissionsExt, path::PathBuf};
+
+    let root = std::env::temp_dir().join(format!("longrun-restart-{}", Uuid::now_v7()));
+    let mut paths = paths(&root);
+    paths.socket_path = std::env::temp_dir().join(format!("lr-{}.sock", Uuid::now_v7()));
+    paths.ensure_private_state().expect("state");
+    let starts = root.join("starts.log");
+    let bin = root.join("bin");
+    fs::create_dir_all(&bin).expect("bin");
+    let codex = bin.join("codex");
+    fs::write(
+        &codex,
+        format!(
+            "#!/bin/sh\nprintf x >> '{}'\nwhile [ \"$1\" != \"--\" ]; do shift; done\nshift\nexec \"$@\"\n",
+            starts.display().to_string().replace('\'', "'\"'\"'")
+        ),
+    )
+    .expect("sandbox");
+    fs::set_permissions(&codex, fs::Permissions::from_mode(0o755)).expect("mode");
+
+    let config = Config::default();
+    let config_path = paths.config_dir.join("config.toml");
+    fs::write(&config_path, toml::to_string(&config).expect("config")).expect("config");
+    let worker_path: std::ffi::OsString =
+        format!("{}:{}", bin.display(), std::env::var("PATH").expect("PATH")).into();
+    let first = Supervisor::new(
+        paths.clone(),
+        &config,
+        PathBuf::from(env!("CARGO_BIN_EXE_longrun")),
+        config_path.clone(),
+        worker_path.clone(),
+    )
+    .expect("first supervisor");
+    let (first_shutdown, first_receiver) = watch::channel(false);
+    let first_server = tokio::spawn(async move { first.serve_until(first_receiver).await });
+    wait_for_socket(&paths.socket_path).await;
+
+    let mut job = specification();
+    job.program = NativeString::from_os_string("/bin/sh".into());
+    job.args = vec![
+        NativeString::from_os_string("-c".into()),
+        NativeString::from_os_string("sleep 1; printf recovered".into()),
+    ];
+    job.timeout_ms = 5_000;
+    longrun::supervisor::submit(&paths, &job)
+        .await
+        .expect("submit");
+    wait_for_state(&paths, job.job_id, ExecutionState::Running).await;
+
+    drop(first_shutdown);
+    first_server.abort();
+    assert!(
+        first_server
+            .await
+            .expect_err("aborted server")
+            .is_cancelled()
+    );
+    fs::remove_file(&paths.socket_path).expect("remove crashed supervisor socket");
+    sleep(Duration::from_millis(25)).await;
+
+    let second = Supervisor::new(
+        paths.clone(),
+        &config,
+        PathBuf::from(env!("CARGO_BIN_EXE_longrun")),
+        config_path,
+        worker_path,
+    )
+    .expect("second supervisor");
+    let (shutdown, receiver) = watch::channel(false);
+    let second_server = tokio::spawn(async move { second.serve_until(receiver).await });
+    wait_for_socket(&paths.socket_path).await;
+    let status = longrun::supervisor::wait(&paths, job.job_id)
+        .await
+        .expect("wait");
+    assert_eq!(status.execution_state, ExecutionState::Succeeded);
+    assert_eq!(fs::read_to_string(&starts).expect("start count"), "x");
+
+    shutdown.send(true).expect("shutdown");
+    second_server
+        .await
+        .expect("second server task")
+        .expect("second server result");
+    let _ = fs::remove_file(&paths.socket_path);
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn supervisor_records_a_stale_worker_persistence_gap_without_reexecution() {
+    use std::{os::unix::fs::PermissionsExt, path::PathBuf};
+
+    let root = std::env::temp_dir().join(format!("longrun-persist-gap-{}", Uuid::now_v7()));
+    let mut paths = paths(&root);
+    paths.socket_path = std::env::temp_dir().join(format!("lr-{}.sock", Uuid::now_v7()));
+    paths.ensure_private_state().expect("state");
+    let starts = root.join("starts.log");
+    let bin = root.join("bin");
+    fs::create_dir_all(&bin).expect("bin");
+    let codex = bin.join("codex");
+    fs::write(
+        &codex,
+        format!(
+            "#!/bin/sh\nprintf x >> '{}'\nwhile [ \"$1\" != \"--\" ]; do shift; done\nshift\nexec \"$@\"\n",
+            starts.display().to_string().replace('\'', "'\"'\"'")
+        ),
+    )
+    .expect("sandbox");
+    fs::set_permissions(&codex, fs::Permissions::from_mode(0o755)).expect("mode");
+
+    let config = Config::default();
+    let config_path = paths.config_dir.join("config.toml");
+    fs::write(&config_path, toml::to_string(&config).expect("config")).expect("config");
+    let database = paths.state_dir.join("longrun.sqlite");
+    let job = specification();
+    let mut store = Store::open(&database).expect("store");
+    store.create_job(&job).expect("job");
+    store
+        .claim_execution(job.job_id, "dead-worker")
+        .expect("claim");
+    store
+        .mark_running(job.job_id, "dead-worker")
+        .expect("running");
+    store
+        .touch_execution(job.job_id, "dead-worker", 0)
+        .expect("stale heartbeat");
+    drop(store);
+
+    let supervisor = Supervisor::new(
+        paths.clone(),
+        &config,
+        PathBuf::from(env!("CARGO_BIN_EXE_longrun")),
+        config_path,
+        format!("{}:{}", bin.display(), std::env::var("PATH").expect("PATH")).into(),
+    )
+    .expect("supervisor");
+    let (shutdown, receiver) = watch::channel(false);
+    let server = tokio::spawn(async move { supervisor.serve_until(receiver).await });
+    wait_for_socket(&paths.socket_path).await;
+    wait_for_state(&paths, job.job_id, ExecutionState::Failed).await;
+    let status = Store::open(&database)
+        .expect("store")
+        .status(job.job_id)
+        .expect("status");
+    assert_eq!(
+        status.result.expect("persistence-gap result").result_hash,
+        "sha256:worker-persistence-gap"
+    );
+    assert!(
+        !starts.exists(),
+        "a stale claimed job must not execute a second time"
+    );
+
+    shutdown.send(true).expect("shutdown");
+    server.await.expect("server task").expect("server result");
+    let _ = fs::remove_file(&paths.socket_path);
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[cfg(unix)]
+async fn wait_for_socket(socket: &Path) {
+    for _ in 0..100 {
+        if socket.exists() {
+            return;
+        }
+        sleep(Duration::from_millis(10)).await;
+    }
+    panic!("supervisor socket was not created");
+}
+
+#[cfg(unix)]
+async fn wait_for_state(paths: &AppPaths, job_id: Uuid, state: ExecutionState) {
+    for _ in 0..300 {
+        if Store::open(paths.state_dir.join("longrun.sqlite"))
+            .expect("store")
+            .execution_state(job_id)
+            .expect("state")
+            == state
+        {
+            return;
+        }
+        sleep(Duration::from_millis(10)).await;
+    }
+    panic!("job {job_id} did not reach {}", state.as_str());
 }

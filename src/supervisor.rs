@@ -13,7 +13,7 @@ use tokio::{
     io::{AsyncRead, AsyncWrite},
     process::Command,
     sync::{Semaphore, watch},
-    time::{Duration, Instant, sleep},
+    time::{Duration, Instant, MissedTickBehavior, interval, sleep},
 };
 
 use crate::{
@@ -22,11 +22,13 @@ use crate::{
     ipc::{read_frame, validate_protocol_version, write_frame},
     paths::AppPaths,
     protocol::{
-        ExecutionMode, ExecutionState, IpcError, IpcMethod, IpcRequest, IpcResponse,
-        JobSpecification, PROTOCOL_VERSION,
+        ExecutionMode, ExecutionState, IpcError, IpcMethod, IpcRequest, IpcResponse, JobResult,
+        JobSpecification, NativeString, PROTOCOL_VERSION,
     },
     store::Store,
 };
+
+const WORKER_HEARTBEAT_STALE_MS: i64 = 5_000;
 
 #[derive(Clone)]
 pub struct Supervisor {
@@ -84,6 +86,7 @@ impl Supervisor {
     }
 
     pub async fn serve_until(&self, shutdown: watch::Receiver<bool>) -> Result<()> {
+        self.reconcile_incomplete_workers()?;
         self.resume_accepted_jobs()?;
         #[cfg(unix)]
         let result = { self.serve_unix(shutdown).await };
@@ -107,6 +110,36 @@ impl Supervisor {
         {
             self.spawn_worker(job.job_id);
         }
+        Ok(())
+    }
+
+    fn reconcile_incomplete_workers(&self) -> Result<()> {
+        let database = self.paths.state_dir.join("longrun.sqlite");
+        let now = now_ms()?;
+        let stale_before = now.saturating_sub(WORKER_HEARTBEAT_STALE_MS);
+        let mut store = Store::open(&database)?;
+        for job_id in store.incomplete_durable_job_ids()? {
+            if store.fail_stale_execution(
+                &persistence_gap_result(job_id, &self.paths, now),
+                stale_before,
+            )? {
+                continue;
+            }
+            if !store.execution_state(job_id)?.is_terminal() {
+                self.active_jobs
+                    .lock()
+                    .expect("supervisor active-job lock is poisoned")
+                    .insert(job_id);
+            }
+        }
+        self.active_jobs
+            .lock()
+            .expect("supervisor active-job lock is poisoned")
+            .retain(|job_id| {
+                store
+                    .execution_state(*job_id)
+                    .is_ok_and(|state| !state.is_terminal())
+            });
         Ok(())
     }
 
@@ -243,6 +276,9 @@ impl Supervisor {
     #[cfg(unix)]
     async fn serve_unix(&self, mut shutdown: watch::Receiver<bool>) -> Result<()> {
         let listener = crate::ipc::unix::bind(&self.paths.socket_path).await?;
+        let mut recovery = interval(Duration::from_secs(1));
+        recovery.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        recovery.tick().await;
         let result = loop {
             tokio::select! {
                 changed = shutdown.changed() => {
@@ -253,6 +289,9 @@ impl Supervisor {
                 connection = listener.accept() => {
                     let (stream, _) = connection?;
                     self.spawn_connection(stream);
+                }
+                _ = recovery.tick() => {
+                    self.reconcile_incomplete_workers()?;
                 }
             }
         };
@@ -269,6 +308,9 @@ impl Supervisor {
     async fn serve_windows(&self, mut shutdown: watch::Receiver<bool>) -> Result<()> {
         let endpoint = self.paths.ipc_endpoint().to_string_lossy().into_owned();
         let mut listener = crate::ipc::windows::first_server(&endpoint)?;
+        let mut recovery = interval(Duration::from_secs(1));
+        recovery.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        recovery.tick().await;
         loop {
             let next = crate::ipc::windows::next_server(&endpoint)?;
             tokio::select! {
@@ -282,6 +324,9 @@ impl Supervisor {
                     let stream = listener;
                     listener = next;
                     self.spawn_connection(stream);
+                }
+                _ = recovery.tick() => {
+                    self.reconcile_incomplete_workers()?;
                 }
             }
         }
@@ -454,6 +499,34 @@ fn now_ms() -> Result<i64> {
         .div_euclid(1_000_000)
         .try_into()
         .map_err(|_| Error::Unavailable("system clock is out of range".into()))
+}
+
+fn persistence_gap_result(job_id: uuid::Uuid, paths: &AppPaths, completed_at_ms: i64) -> JobResult {
+    JobResult {
+        job_id,
+        terminal_state: ExecutionState::Failed,
+        exit_code: None,
+        signal: None,
+        duration_ms: 0,
+        stdout_log: NativeString::from_os_string(
+            paths
+                .log_dir
+                .join(format!("{job_id}.stdout.log"))
+                .into_os_string(),
+        ),
+        stderr_log: NativeString::from_os_string(
+            paths
+                .log_dir
+                .join(format!("{job_id}.stderr.log"))
+                .into_os_string(),
+        ),
+        stdout_tail: String::new(),
+        stderr_tail: String::new(),
+        stdout_truncated: false,
+        stderr_truncated: false,
+        result_hash: "sha256:worker-persistence-gap".into(),
+        completed_at_ms,
+    }
 }
 
 fn response_ok(request_id: uuid::Uuid, result: serde_json::Value) -> IpcResponse {

@@ -356,3 +356,23 @@ commits required by the constitution.
   it requests durable cancellation through the store, and the claimed worker
   performs the one platform cleanup call. It drains wait handlers after the
   cancelled result is persisted, avoiding an exit-time lost IPC response.
+
+## Durable Worker Restart and Persistence-Gap Recovery
+
+- 2026-07-31: added execution heartbeats and schema version 4. A restarted
+  supervisor adopts a fresh in-progress durable worker instead of launching a
+  duplicate. An execution whose heartbeat becomes stale is terminally recorded
+  as failed with an explicit persistence-gap result; Longrun never retries its
+  requested command.
+- Focused checks: `cargo test --locked --test recovery` (5 passed) proves an
+  abruptly stopped supervisor can restart while the original worker completes
+  exactly once, and proves a stale `running` execution becomes the
+  `sha256:worker-persistence-gap` result without invoking the sandbox again.
+  Store migration tests cover the version-2 to version-4 path.
+- Live check: a durable `sleep 2; printf recovered` job continued after its
+  first daemon received SIGKILL. A second daemon reclaimed the stale socket,
+  observed the existing worker's heartbeat, and recorded `succeeded`; the fake
+  sandbox start log contained exactly one entry.
+- Review: worker heartbeats are only liveness evidence. They may prevent a
+  premature failure record but never authorize re-execution; stale recovery
+  records failure rather than risking a second requested-command spawn.

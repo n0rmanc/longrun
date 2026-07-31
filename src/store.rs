@@ -63,10 +63,10 @@ impl Store {
         let current_version: i64 = self
             .connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))?;
-        if current_version == 3 {
+        if current_version == 4 {
             return Ok(());
         }
-        if current_version > 3 {
+        if current_version > 4 {
             return Err(Error::Unavailable(
                 "Longrun state schema is newer than this binary".into(),
             ));
@@ -153,6 +153,11 @@ impl Store {
                 )?;
             }
             version = 3;
+        }
+        if version < 4 {
+            transaction
+                .execute_batch("ALTER TABLE executions ADD COLUMN heartbeat_at_ms INTEGER;")?;
+            version = 4;
         }
         transaction.execute(
             "UPDATE deliveries
@@ -402,6 +407,35 @@ impl Store {
             .collect())
     }
 
+    pub fn incomplete_durable_job_ids(&self) -> Result<Vec<Uuid>> {
+        let mut statement = self.connection.prepare(
+            "SELECT jobs.job_id, jobs.spec_json
+             FROM jobs JOIN executions USING (job_id)
+             WHERE executions.state IN ('starting', 'running')",
+        )?;
+        statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .filter_map(|row| match row {
+                Ok((job_id, specification)) => {
+                    match serde_json::from_str::<JobSpecification>(&specification) {
+                        Ok(job)
+                            if job.execution_mode == crate::protocol::ExecutionMode::Durable =>
+                        {
+                            Some(job_id.parse().map_err(|error| {
+                                Error::InvalidInput(format!("invalid job id: {error}"))
+                            }))
+                        }
+                        Ok(_) => None,
+                        Err(error) => Some(Err(error.into())),
+                    }
+                }
+                Err(error) => Some(Err(error.into())),
+            })
+            .collect()
+    }
+
     pub fn claim_execution(&mut self, job_id: Uuid, claim: &str) -> Result<JobSpecification> {
         let transaction = self.connection.transaction()?;
         let job_id = job_id.to_string();
@@ -412,7 +446,8 @@ impl Store {
         )?;
         let changed = transaction.execute(
             "UPDATE executions
-             SET state = 'starting', execution_claim = ?1, worker_id = ?2
+             SET state = 'starting', execution_claim = ?1, worker_id = ?2,
+                 heartbeat_at_ms = unixepoch() * 1000
              WHERE job_id = ?2 AND state = 'accepted' AND execution_claim IS NULL",
             params![claim, job_id],
         )?;
@@ -427,7 +462,9 @@ impl Store {
 
     pub fn mark_running(&mut self, job_id: Uuid, claim: &str) -> Result<()> {
         let changed = self.connection.execute(
-            "UPDATE executions SET state = 'running', started_at_ms = unixepoch() * 1000
+            "UPDATE executions
+             SET state = 'running', started_at_ms = unixepoch() * 1000,
+                 heartbeat_at_ms = unixepoch() * 1000
              WHERE job_id = ?1 AND state = 'starting' AND execution_claim = ?2",
             params![job_id.to_string(), claim],
         )?;
@@ -479,6 +516,55 @@ impl Store {
                     .map_err(|_| Error::InvalidInput("invalid stored cancellation grace".into()))
             })
             .transpose()
+    }
+
+    pub fn touch_execution(&mut self, job_id: Uuid, claim: &str, now_ms: i64) -> Result<()> {
+        let changed = self.connection.execute(
+            "UPDATE executions
+             SET heartbeat_at_ms = ?1
+             WHERE job_id = ?2
+               AND state IN ('starting', 'running')
+               AND execution_claim = ?3",
+            params![now_ms, job_id.to_string(), claim],
+        )?;
+        if changed != 1 {
+            return Err(Error::Denied("execution claim is not active".into()));
+        }
+        Ok(())
+    }
+
+    pub fn fail_stale_execution(
+        &mut self,
+        result: &JobResult,
+        stale_before_ms: i64,
+    ) -> Result<bool> {
+        if result.terminal_state != ExecutionState::Failed {
+            return Err(Error::InvalidInput(
+                "stale execution recovery must produce a failed result".into(),
+            ));
+        }
+        let transaction = self.connection.transaction()?;
+        let job_id = result.job_id.to_string();
+        let changed = transaction.execute(
+            "UPDATE executions
+             SET state = 'failed', finished_at_ms = ?1
+             WHERE job_id = ?2
+               AND state IN ('starting', 'running')
+               AND COALESCE(heartbeat_at_ms, started_at_ms, 0) <= ?3",
+            params![result.completed_at_ms, job_id, stale_before_ms],
+        )?;
+        if changed == 1 {
+            transaction.execute(
+                "INSERT INTO results (job_id, result_json, created_at_ms) VALUES (?1, ?2, ?3)",
+                params![
+                    job_id,
+                    serde_json::to_string(result)?,
+                    result.completed_at_ms
+                ],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(changed == 1)
     }
 
     pub fn finish_execution(&mut self, result: &JobResult, claim: &str) -> Result<()> {

@@ -121,7 +121,7 @@ fn file_store_migrates_with_wal() {
     fs::create_dir_all(&root).expect("create state");
     let store = Store::open(root.join("state.sqlite")).expect("open store");
 
-    assert_eq!(store.schema_version().expect("schema version"), 3);
+    assert_eq!(store.schema_version().expect("schema version"), 4);
     assert_eq!(store.journal_mode().expect("journal mode"), "wal");
     fs::remove_dir_all(root).expect("remove test state");
 }
@@ -147,10 +147,48 @@ fn version_two_delivery_rows_upgrade_to_leased_recovery_schema() {
     drop(connection);
 
     let mut store = Store::open(&database).expect("migrate");
-    assert_eq!(store.schema_version().expect("schema version"), 3);
+    assert_eq!(store.schema_version().expect("schema version"), 4);
     store
         .create_job_for_session(&specification(), Some("session"))
         .expect("current delivery insert");
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn version_three_execution_rows_gain_the_worker_heartbeat_column() {
+    let root = std::env::temp_dir().join(format!("longrun-v3-{}", Uuid::now_v7()));
+    fs::create_dir_all(&root).expect("root");
+    let database = root.join("state.sqlite");
+    let connection = rusqlite::Connection::open(&database).expect("legacy database");
+    connection
+        .execute_batch(
+            "CREATE TABLE executions (
+                job_id TEXT PRIMARY KEY,
+                state TEXT NOT NULL,
+                execution_claim TEXT,
+                worker_id TEXT,
+                pid INTEGER,
+                started_at_ms INTEGER,
+                finished_at_ms INTEGER,
+                cancel_requested_at_ms INTEGER,
+                cancel_grace_ms INTEGER
+             );
+             PRAGMA user_version = 3;",
+        )
+        .expect("legacy schema");
+    drop(connection);
+
+    let store = Store::open(&database).expect("migrate");
+    assert_eq!(store.schema_version().expect("schema version"), 4);
+    let connection = rusqlite::Connection::open(&database).expect("connection");
+    let columns = connection
+        .prepare("PRAGMA table_info(executions)")
+        .expect("table info")
+        .query_map([], |row| row.get::<_, String>(1))
+        .expect("columns")
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .expect("column names");
+    assert!(columns.iter().any(|column| column == "heartbeat_at_ms"));
     fs::remove_dir_all(root).expect("cleanup");
 }
 
