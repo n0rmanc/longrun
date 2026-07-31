@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://longrun.local/schemas/receipt-v1.json",
+  "title": "Longrun Submission Receipt V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "receipt_version",
+    "job_id",
+    "session_id",
+    "turn_id",
+    "tool_use_id",
+    "cwd",
+    "program",
+    "args",
+    "execution_mode",
+    "shell_mode",
+    "timeout_ms",
+    "permission_profile",
+    "environment_policy",
+    "command_hash",
+    "nonce",
+    "issued_at",
+    "expires_at"
+  ],
+  "properties": {
+    "receipt_version": {
+      "const": 1
+    },
+    "job_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "turn_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "tool_use_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "cwd": {
+      "$ref": "#/$defs/nativeString"
+    },
+    "program": {
+      "$ref": "#/$defs/nativeString"
+    },
+    "args": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/nativeString"
+      }
+    },
+    "execution_mode": {
+      "enum": ["embedded", "durable"]
+    },
+    "shell_mode": {
+      "enum": ["direct", "explicit_shell"]
+    },
+    "timeout_ms": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "permission_profile": {
+      "type": "string",
+      "minLength": 1
+    },
+    "environment_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pass", "deny_patterns"],
+      "properties": {
+        "pass": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "deny_patterns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "command_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "nonce": {
+      "type": "string",
+      "minLength": 22
+    },
+    "issued_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "$defs": {
+    "nativeString": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["encoding", "value"],
+      "properties": {
+        "encoding": {
+          "enum": ["utf8", "unix_bytes", "windows_utf16le"]
+        },
+        "value": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}
