@@ -91,21 +91,22 @@ mod integration {
         (root, codex)
     }
 
-    fn run(
-        root: &std::path::Path,
-        arguments: impl IntoIterator<Item = OsString>,
-    ) -> std::process::Output {
+    fn command(root: &std::path::Path) -> Command {
         let path = format!(
             "{}:{}",
             root.join("bin").display(),
             std::env::var("PATH").expect("PATH")
         );
-        Command::new(env!("CARGO_BIN_EXE_longrun"))
-            .args(arguments)
-            .env("HOME", root.join("home"))
-            .env("PATH", path)
-            .output()
-            .expect("run longrun")
+        let mut command = Command::new(env!("CARGO_BIN_EXE_longrun"));
+        command.env("HOME", root.join("home")).env("PATH", path);
+        command
+    }
+
+    fn run(
+        root: &std::path::Path,
+        arguments: impl IntoIterator<Item = OsString>,
+    ) -> std::process::Output {
+        command(root).args(arguments).output().expect("run longrun")
     }
 
     #[test]
@@ -125,6 +126,32 @@ mod integration {
         assert_eq!(output.status.code(), Some(7));
         assert_eq!(output.stdout, b"out");
         assert_eq!(output.stderr, b"err");
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn direct_run_inherits_only_explicitly_allowed_environment() {
+        let (root, _) = setup();
+        let allowed = format!("LONGRUN_ALLOWED_TOKEN_{}", Uuid::now_v7().simple());
+        let blocked = format!("LONGRUN_BLOCKED_SECRET_{}", Uuid::now_v7().simple());
+        let script =
+            format!("printf '%s|%s' \"${{{allowed}:-missing}}\" \"${{{blocked}:-missing}}\"");
+        let output = command(&root)
+            .args([
+                OsString::from("run"),
+                OsString::from("--env-pass"),
+                OsString::from(&allowed),
+                OsString::from("--"),
+                OsString::from("/bin/sh"),
+                OsString::from("-c"),
+                OsString::from(script),
+            ])
+            .env(&allowed, "allowed")
+            .env(&blocked, "blocked")
+            .output()
+            .expect("run longrun");
+        assert_eq!(output.status.code(), Some(0));
+        assert_eq!(output.stdout, b"allowed|missing");
         fs::remove_dir_all(root).expect("cleanup");
     }
 

@@ -71,7 +71,7 @@ impl Runner {
             .env_clear()
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        copy_safe_environment(&mut command, job, config);
+        copy_safe_environment(&mut command, job);
         platform::configure_command(&mut command)?;
         let mut child = command.spawn()?;
         let stdout = child
@@ -163,21 +163,14 @@ fn command_for(
     }
 }
 
-fn copy_safe_environment(command: &mut Command, job: &JobSpecification, config: &Config) {
+fn copy_safe_environment(command: &mut Command, job: &JobSpecification) {
     for name in ["PATH", "HOME", "TMPDIR", "SYSTEMROOT", "WINDIR", "COMSPEC"] {
         if let Some(value) = std::env::var_os(name) {
             command.env(name, value);
         }
     }
-    for name in config
-        .environment
-        .pass
-        .iter()
-        .chain(job.environment_policy.pass.iter())
-    {
-        if (!config.environment.is_protected(name) || config.environment.allows(name))
-            && let Some(value) = std::env::var_os(name)
-        {
+    for name in &job.environment_policy.pass {
+        if let Some(value) = std::env::var_os(name) {
             command.env(name, value);
         }
     }
