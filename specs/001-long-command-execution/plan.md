@@ -19,8 +19,8 @@ and recovery delivery.
 
 ## Technical Context
 
-**Language/Version**: Rust 2024 edition; MSRV Rust 1.85; development toolchain
-Rust 1.97.0
+**Language/Version**: Rust 2024 edition; MSRV Rust 1.88 (required by `rmcp`
+3.1); development toolchain Rust 1.97.0
 
 **Primary Dependencies**: `clap` 4, `tokio` 1.49, `serde`, `serde_json`,
 `toml`, `uuid`, `rusqlite` with bundled SQLite, `directories`, `thiserror`,

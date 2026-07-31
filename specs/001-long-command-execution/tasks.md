@@ -30,13 +30,13 @@ product-scope exclusions.
 
 **Purpose**: Establish the single-package Rust project and shared validation.
 
-- [ ] T001 Create the Rust 2024 package and binary named `longrun` in `Cargo.toml`, `src/lib.rs`, and `src/main.rs`
-- [ ] T002 Add the locked dependency set from plan.md with target-specific Unix and Windows dependencies in `Cargo.toml`
-- [ ] T003 [P] Define shared error types and process exit-code mapping in `src/error.rs`
-- [ ] T004 [P] Define OS-specific application, state, log, socket, and integration paths in `src/paths.rs`
-- [ ] T005 [P] Configure repository ignores for build, live-test, and local Longrun state artifacts in `.gitignore`
-- [ ] T006 [P] Add reusable command fixture binaries for success, failure, output, sleep, and descendant spawning in `tests/fixtures/commands/`
-- [ ] T007 Add the implementation evidence log and significant-step review checklist in `specs/001-long-command-execution/implementation-log.md`
+- [X] T001 Create the Rust 2024 package and binary named `longrun` in `Cargo.toml`, `src/lib.rs`, and `src/main.rs`
+- [X] T002 Add the locked dependency set from plan.md with target-specific Unix and Windows dependencies in `Cargo.toml`
+- [X] T003 [P] Define shared error types and process exit-code mapping in `src/error.rs`
+- [X] T004 [P] Define OS-specific application, state, log, socket, and integration paths in `src/paths.rs`
+- [X] T005 [P] Configure repository ignores for build, live-test, and local Longrun state artifacts in `.gitignore`
+- [X] T006 [P] Add reusable command fixture binaries for success, failure, output, sleep, and descendant spawning in `tests/fixtures/commands/`
+- [X] T007 Add the implementation evidence log and significant-step review checklist in `specs/001-long-command-execution/implementation-log.md`
 
 **Checkpoint**: `cargo check`, `cargo fmt --check`, and fixture compilation pass.
 

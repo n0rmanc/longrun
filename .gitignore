@@ -1,2 +1,12 @@
 # CocoIndex Code (ccc)
 /.cocoindex_code/
+
+# Rust and Longrun local state
+/target/
+*.rs.bk
+*.rlib
+*.prof*
+*.log
+.env*
+.longrun/
+longrun-state/
