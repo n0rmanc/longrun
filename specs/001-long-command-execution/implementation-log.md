@@ -333,3 +333,26 @@ commits required by the constitution.
   service implicitly. The macOS and Linux managers provide lifecycle control;
   Windows startup registration is generated, while graceful Windows stop
   remains tied to the supervisor shutdown endpoint work.
+
+## Unified Supervisor Shutdown and Process Cleanup
+
+- 2026-07-31: supervisor shutdown now stops accepting new work, requests
+  cancellation only for its active durable workers, and waits for their owned
+  runners to persist terminal results. Unix SIGINT/SIGTERM in either a hook
+  runner or supervisor now enters the same cancellation route. The runner
+  remains the only component that invokes the shared platform process-tree
+  termination path.
+- Focused checks: `cargo test --locked --test supervisor` (6 passed), including
+  a running durable job whose supervisor shutdown returns a `cancelled` result
+  to a concurrently waiting IPC client. `cargo test --locked --test
+  process_tree`, `--test security`, and `--test worker` passed.
+- Live checks: with a disposable home and fake `codex sandbox`, a one-second
+  timed `longrun run` killed its recorded `sleep` descendant and exited 124.
+  A running durable `longrun run --mode durable` then received exit 130 and a
+  persisted `cancelled` result after the daemon received SIGTERM. Sending
+  SIGTERM to an embedded runner likewise returned 130 and killed its recorded
+  descendant.
+- Review: the supervisor tracks worker job IDs, not requested-command PIDs;
+  it requests durable cancellation through the store, and the claimed worker
+  performs the one platform cleanup call. It drains wait handlers after the
+  cancelled result is persisted, avoiding an exit-time lost IPC response.

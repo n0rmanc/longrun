@@ -152,9 +152,9 @@ or elevated access.
 - [X] T046 [US6] Implement danger-full-access dual opt-in and fail-closed sandbox validation in `src/config.rs`
 - [X] T047 [US6] Implement Unix process-group creation, graceful termination, and forced group kill in `src/platform/unix.rs`
 - [X] T048 [US6] Implement Windows Job Object creation, assignment, graceful stop, and kill-on-close in `src/platform/windows.rs`
-- [ ] T049 [US6] Route timeout, cancellation, hook shutdown, and supervisor shutdown through one process-tree cleanup interface in `src/platform/mod.rs`
+- [X] T049 [US6] Route timeout, cancellation, hook shutdown, and supervisor shutdown through one process-tree cleanup interface in `src/platform/mod.rs`
 - [X] T050 [US6] Implement constant-time receipt verification, replay rejection, and pending-token expiry cleanup in `src/receipt.rs`
-- [ ] T051 [US6] Run sandbox and process-tree live tests, review the diff, and record evidence in `specs/001-long-command-execution/implementation-log.md`
+- [X] T051 [US6] Run sandbox and process-tree live tests, review the diff, and record evidence in `specs/001-long-command-execution/implementation-log.md`
 
 **Checkpoint**: Longrun cannot silently execute outside its configured
 permission and environment boundary.

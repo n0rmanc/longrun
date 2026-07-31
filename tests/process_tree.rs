@@ -1,7 +1,11 @@
 #[cfg(unix)]
 #[tokio::test]
 async fn timeout_kills_the_owned_process_group() {
-    use std::{fs, os::unix::fs::PermissionsExt, process::Command};
+    use std::{
+        fs,
+        os::unix::fs::PermissionsExt,
+        process::{Command, Stdio},
+    };
 
     use longrun::{
         config::Config,
@@ -44,7 +48,7 @@ async fn timeout_kills_the_owned_process_group() {
         cwd: NativeString::from_os_string(std::env::current_dir().expect("cwd").into_os_string()),
         execution_mode: ExecutionMode::Embedded,
         shell_mode: ShellMode::Direct,
-        timeout_ms: 25,
+        timeout_ms: 250,
         permission_profile: ":workspace".into(),
         environment_policy: EnvironmentPolicy::default(),
         created_at_ms: 1,
@@ -62,8 +66,13 @@ async fn timeout_kills_the_owned_process_group() {
         .trim()
         .into();
     assert!(
+        !pid.is_empty(),
+        "descendant PID must be recorded before timeout"
+    );
+    assert!(
         !Command::new("kill")
             .args(["-0", &pid])
+            .stderr(Stdio::null())
             .status()
             .expect("kill")
             .success()

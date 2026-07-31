@@ -104,6 +104,8 @@ impl Runner {
         let stderr_task = tokio::spawn(copy_stream(stderr, stderr_path.clone()));
         let timeout = sleep(Duration::from_millis(job.timeout_ms));
         tokio::pin!(timeout);
+        let shutdown = platform::wait_for_shutdown();
+        tokio::pin!(shutdown);
         let (state, exit_code) = loop {
             tokio::select! {
                 status = child.wait() => {
@@ -120,6 +122,11 @@ impl Runner {
                         let _ = platform::terminate(&mut child, &process_tree, grace_ms).await?;
                         break (ExecutionState::Cancelled, None);
                     }
+                }
+                shutdown_result = &mut shutdown => {
+                    shutdown_result?;
+                    let _ = platform::terminate(&mut child, &process_tree, config.execution.termination_grace_ms).await?;
+                    break (ExecutionState::Cancelled, None);
                 }
             }
         };

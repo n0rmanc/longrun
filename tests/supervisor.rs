@@ -1,21 +1,27 @@
 use longrun::{
-    config::Config,
     ipc::{MAX_FRAME_BYTES, read_frame, validate_protocol_version, write_frame},
+    protocol::{
+        IpcError, IpcEvent, IpcEventKind, IpcMethod, IpcRequest, IpcResponse, PROTOCOL_VERSION,
+    },
+};
+use tokio::io::{AsyncWriteExt, duplex};
+use uuid::Uuid;
+
+#[cfg(unix)]
+use longrun::{
+    config::Config,
     paths::AppPaths,
     protocol::{
-        EnvironmentPolicy, ExecutionMode, ExecutionState, IpcError, IpcEvent, IpcEventKind,
-        IpcMethod, IpcRequest, IpcResponse, JobSpecification, NativeString, PROTOCOL_VERSION,
-        ShellMode,
+        EnvironmentPolicy, ExecutionMode, ExecutionState, JobSpecification, NativeString, ShellMode,
     },
     store::Store,
     supervisor::Supervisor,
 };
+#[cfg(unix)]
 use tokio::{
-    io::{AsyncWriteExt, duplex},
     sync::watch,
     time::{Duration, sleep},
 };
-use uuid::Uuid;
 
 fn request() -> IpcRequest {
     IpcRequest {
@@ -263,6 +269,104 @@ async fn supervisor_recovers_accepted_jobs_and_starts_each_durable_job_once() {
 
     shutdown.send(true).expect("stop");
     server.await.expect("server task").expect("server result");
+    assert!(
+        !paths.socket_path.exists(),
+        "socket must be removed on shutdown"
+    );
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn supervisor_shutdown_cancels_its_running_durable_worker() {
+    use std::{ffi::OsString, fs, os::unix::fs::PermissionsExt, path::PathBuf};
+
+    let root = std::env::temp_dir().join(format!("longrun-supervisor-stop-{}", Uuid::now_v7()));
+    let paths = AppPaths {
+        config_dir: root.join("config"),
+        data_dir: root.join("data"),
+        state_dir: root.join("state"),
+        log_dir: root.join("logs"),
+        jobs_dir: root.join("jobs"),
+        integration_dir: root.join("integration"),
+        socket_path: std::env::temp_dir().join(format!("lr-{}.sock", Uuid::now_v7())),
+    };
+    paths.ensure_private_state().expect("state");
+    let bin = root.join("bin");
+    fs::create_dir_all(&bin).expect("bin");
+    let codex = bin.join("codex");
+    fs::write(
+        &codex,
+        "#!/bin/sh\nwhile [ \"$1\" != \"--\" ]; do shift; done\nshift\nexec \"$@\"\n",
+    )
+    .expect("sandbox");
+    fs::set_permissions(&codex, fs::Permissions::from_mode(0o755)).expect("mode");
+
+    let mut config = Config::default();
+    config.execution.termination_grace_ms = 25;
+    let config_path = paths.config_dir.join("config.toml");
+    fs::write(&config_path, toml::to_string(&config).expect("config")).expect("write config");
+    let worker_path: OsString =
+        format!("{}:{}", bin.display(), std::env::var("PATH").expect("PATH")).into();
+    let supervisor = Supervisor::new(
+        paths.clone(),
+        &config,
+        PathBuf::from(env!("CARGO_BIN_EXE_longrun")),
+        config_path,
+        worker_path,
+    )
+    .expect("supervisor");
+    let (shutdown, receiver) = watch::channel(false);
+    let server = {
+        let supervisor = supervisor.clone();
+        tokio::spawn(async move { supervisor.serve_until(receiver).await })
+    };
+    wait_for_socket(&paths.socket_path).await;
+
+    let job = durable_job("sleep 5");
+    longrun::supervisor::submit(&paths, &job)
+        .await
+        .expect("submit durable job");
+    for _ in 0..100 {
+        if Store::open(paths.state_dir.join("longrun.sqlite"))
+            .expect("store")
+            .execution_state(job.job_id)
+            .expect("state")
+            == ExecutionState::Running
+        {
+            break;
+        }
+        sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(
+        Store::open(paths.state_dir.join("longrun.sqlite"))
+            .expect("store")
+            .execution_state(job.job_id)
+            .expect("state"),
+        ExecutionState::Running
+    );
+    let wait_paths = paths.clone();
+    let waiter =
+        tokio::spawn(async move { longrun::supervisor::wait(&wait_paths, job.job_id).await });
+    sleep(Duration::from_millis(25)).await;
+
+    shutdown.send(true).expect("stop");
+    server.await.expect("server task").expect("server result");
+    assert_eq!(
+        waiter
+            .await
+            .expect("wait task")
+            .expect("wait response")
+            .execution_state,
+        ExecutionState::Cancelled
+    );
+    assert_eq!(
+        Store::open(paths.state_dir.join("longrun.sqlite"))
+            .expect("store")
+            .execution_state(job.job_id)
+            .expect("state"),
+        ExecutionState::Cancelled
+    );
     assert!(
         !paths.socket_path.exists(),
         "socket must be removed on shutdown"

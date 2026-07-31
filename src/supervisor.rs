@@ -1,9 +1,19 @@
-use std::{ffi::OsString, path::PathBuf, process::Stdio, sync::Arc};
+use std::{
+    collections::HashSet,
+    ffi::OsString,
+    path::PathBuf,
+    process::Stdio,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     process::Command,
     sync::{Semaphore, watch},
+    time::{Duration, Instant, sleep},
 };
 
 use crate::{
@@ -25,6 +35,10 @@ pub struct Supervisor {
     config_path: PathBuf,
     worker_path: OsString,
     permits: Arc<Semaphore>,
+    active_jobs: Arc<Mutex<HashSet<uuid::Uuid>>>,
+    connections: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
+    stopping: Arc<AtomicBool>,
+    termination_grace_ms: u64,
 }
 
 impl Supervisor {
@@ -46,17 +60,23 @@ impl Supervisor {
             executable,
             config_path,
             worker_path,
+            active_jobs: Arc::new(Mutex::new(HashSet::new())),
+            connections: Arc::new(Mutex::new(Vec::new())),
+            stopping: Arc::new(AtomicBool::new(false)),
+            termination_grace_ms: config.execution.termination_grace_ms,
         })
     }
 
     pub async fn run(&self) -> Result<()> {
         let (shutdown_sender, shutdown_receiver) = watch::channel(false);
         let server = self.serve_until(shutdown_receiver);
+        let shutdown = crate::platform::wait_for_shutdown();
         tokio::pin!(server);
+        tokio::pin!(shutdown);
         tokio::select! {
             result = &mut server => result,
-            result = tokio::signal::ctrl_c() => {
-                result.map_err(Error::from)?;
+            result = &mut shutdown => {
+                result?;
                 let _ = shutdown_sender.send(true);
                 server.await
             }
@@ -66,20 +86,19 @@ impl Supervisor {
     pub async fn serve_until(&self, shutdown: watch::Receiver<bool>) -> Result<()> {
         self.resume_accepted_jobs()?;
         #[cfg(unix)]
-        {
-            self.serve_unix(shutdown).await
-        }
+        let result = { self.serve_unix(shutdown).await };
         #[cfg(windows)]
-        {
-            self.serve_windows(shutdown).await
-        }
+        let result = { self.serve_windows(shutdown).await };
         #[cfg(not(any(unix, windows)))]
-        {
+        let result = {
             let _ = shutdown;
             Err(Error::Unavailable(
                 "Longrun supervisor is unsupported on this platform".into(),
             ))
-        }
+        };
+        self.shutdown_workers().await?;
+        self.drain_connections().await;
+        result
     }
 
     fn resume_accepted_jobs(&self) -> Result<()> {
@@ -92,16 +111,38 @@ impl Supervisor {
     }
 
     fn spawn_worker(&self, job_id: uuid::Uuid) {
+        if self.stopping.load(Ordering::Acquire)
+            || !self
+                .active_jobs
+                .lock()
+                .expect("supervisor active-job lock is poisoned")
+                .insert(job_id)
+        {
+            return;
+        }
         let executable = self.executable.clone();
         let config_path = self.config_path.clone();
         let state_dir = self.paths.state_dir.clone();
         let log_dir = self.paths.log_dir.clone();
         let worker_path = self.worker_path.clone();
         let permits = self.permits.clone();
+        let active_jobs = self.active_jobs.clone();
+        let stopping = self.stopping.clone();
         tokio::spawn(async move {
             let Ok(_permit) = permits.acquire_owned().await else {
+                active_jobs
+                    .lock()
+                    .expect("supervisor active-job lock is poisoned")
+                    .remove(&job_id);
                 return;
             };
+            if stopping.load(Ordering::Acquire) {
+                active_jobs
+                    .lock()
+                    .expect("supervisor active-job lock is poisoned")
+                    .remove(&job_id);
+                return;
+            }
             let mut worker = Command::new(executable);
             worker
                 .arg("--config")
@@ -120,7 +161,83 @@ impl Supervisor {
             if let Ok(mut worker) = worker.spawn() {
                 let _ = worker.wait().await;
             }
+            active_jobs
+                .lock()
+                .expect("supervisor active-job lock is poisoned")
+                .remove(&job_id);
         });
+    }
+
+    async fn shutdown_workers(&self) -> Result<()> {
+        self.stopping.store(true, Ordering::Release);
+        let job_ids = self
+            .active_jobs
+            .lock()
+            .expect("supervisor active-job lock is poisoned")
+            .iter()
+            .copied()
+            .collect::<Vec<_>>();
+        let database = self.paths.state_dir.join("longrun.sqlite");
+        let now = now_ms()?;
+        let mut cancelling = Vec::new();
+        for job_id in job_ids {
+            if Store::open(&database)?.request_cancellation(
+                job_id,
+                self.termination_grace_ms,
+                now,
+            )? {
+                cancelling.push(job_id);
+            }
+        }
+        if cancelling.is_empty() {
+            return Ok(());
+        }
+        let deadline =
+            Instant::now() + Duration::from_millis(self.termination_grace_ms.saturating_add(2_000));
+        loop {
+            let store = Store::open(&database)?;
+            if cancelling.iter().all(|job_id| {
+                store
+                    .execution_state(*job_id)
+                    .is_ok_and(ExecutionState::is_terminal)
+            }) {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return Err(Error::Unavailable(
+                    "durable workers did not stop within the termination grace period".into(),
+                ));
+            }
+            sleep(Duration::from_millis(25)).await;
+        }
+    }
+
+    fn spawn_connection<S>(&self, stream: S)
+    where
+        S: AsyncRead + AsyncWrite + Send + Unpin + 'static,
+    {
+        let supervisor = self.clone();
+        let handle = tokio::spawn(async move {
+            let _ = supervisor.handle_connection(stream).await;
+        });
+        let mut connections = self
+            .connections
+            .lock()
+            .expect("supervisor connection lock is poisoned");
+        connections.retain(|connection| !connection.is_finished());
+        connections.push(handle);
+    }
+
+    async fn drain_connections(&self) {
+        let connections = std::mem::take(
+            &mut *self
+                .connections
+                .lock()
+                .expect("supervisor connection lock is poisoned"),
+        );
+        for connection in connections {
+            let _ = connection.await;
+        }
     }
 
     #[cfg(unix)]
@@ -135,10 +252,7 @@ impl Supervisor {
                 }
                 connection = listener.accept() => {
                     let (stream, _) = connection?;
-                    let supervisor = self.clone();
-                    tokio::spawn(async move {
-                        let _ = supervisor.handle_connection(stream).await;
-                    });
+                    self.spawn_connection(stream);
                 }
             }
         };
@@ -167,10 +281,7 @@ impl Supervisor {
                     connected?;
                     let stream = listener;
                     listener = next;
-                    let supervisor = self.clone();
-                    tokio::spawn(async move {
-                        let _ = supervisor.handle_connection(stream).await;
-                    });
+                    self.spawn_connection(stream);
                 }
             }
         }
@@ -203,6 +314,13 @@ impl Supervisor {
                         Store::open(self.paths.state_dir.join("longrun.sqlite"))?.status(job_id)?;
                     if status.execution_state.is_terminal() {
                         return Ok(serde_json::to_value(status)?);
+                    }
+                    if self.stopping.load(Ordering::Acquire)
+                        && status.execution_state == ExecutionState::Accepted
+                    {
+                        return Err(Error::Unavailable(
+                            "supervisor stopped before the durable job started".into(),
+                        ));
                     }
                     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                 }
