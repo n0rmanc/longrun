@@ -198,17 +198,17 @@ restart the session, and observe exactly one recovery delivery.
 
 ### Tests for User Story 4
 
-- [ ] T061 [P] [US4] Add failing framed IPC request, response, event, version, and malformed-frame tests in `tests/supervisor.rs`
-- [ ] T062 [P] [US4] Add failing Unix socket and Windows named-pipe transport tests in `tests/supervisor.rs`
+- [X] T061 [P] [US4] Add failing framed IPC request, response, event, version, and malformed-frame tests in `tests/supervisor.rs`
+- [X] T062 [P] [US4] Add failing Unix socket and Windows named-pipe transport tests in `tests/supervisor.rs`
 - [ ] T063 [P] [US4] Add failing delivery-lease, expiry, stable-idempotency, per-session lock, retry-budget, and duplicate-resume tests in `tests/recovery.rs`
 - [ ] T064 [P] [US4] Add failing supervisor restart and completed-before-persist recovery tests in `tests/recovery.rs`
 - [ ] T065 [P] [US4] Add a durable Codex termination/restart live harness in `tests/live/durable_session.rs`
 
 ### Implementation for User Story 4
 
-- [ ] T066 [US4] Implement length-prefixed JSON request, response, and event framing in `src/ipc/mod.rs`
-- [ ] T067 [US4] Implement per-user Unix-domain socket server and client transport in `src/ipc/unix.rs`
-- [ ] T068 [US4] Implement per-user Windows named-pipe server and client transport in `src/ipc/windows.rs`
+- [X] T066 [US4] Implement length-prefixed JSON request, response, and event framing in `src/ipc/mod.rs`
+- [X] T067 [US4] Implement per-user Unix-domain socket server and client transport in `src/ipc/unix.rs`
+- [X] T068 [US4] Implement per-user Windows named-pipe server and client transport in `src/ipc/windows.rs`
 - [ ] T069 [US4] Implement durable supervisor ownership, concurrency limits, completion events, and health in `src/supervisor.rs`
 - [ ] T070 [US4] Implement durable submit, wait, status, logs, cancel, and gc routing through the shared runtime in `src/supervisor.rs`
 - [ ] T071 [US4] Implement delivery leases, lease expiry, session locks, attempt budgets, and atomic delivery marking in `src/store.rs`

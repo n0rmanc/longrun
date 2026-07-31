@@ -232,3 +232,21 @@ commits required by the constitution.
   only the `codex sandbox` boundary is a controlled pass-through fixture.
   The 30-minute mode still requires the external Codex event trace review
   documented in the quickstart to prove zero model-side polling.
+
+## Supervisor IPC Foundation
+
+- 2026-07-31: added bounded (1 MiB), unsigned-32-bit big-endian,
+  length-prefixed JSON framing for request, response, and event envelopes.
+  Unix sockets use a mode-0600 endpoint; Windows uses first-instance named
+  pipes plus a busy-pipe client retry, rejects remote clients, and prevents
+  DACL rewriting. Both reject protocol-version mismatch and response IDs that
+  do not match the caller's request.
+- Focused checks: the Unix transport test bound a real local socket, checked
+  its permissions, and completed a request/response round trip. Frame tests
+  cover all envelope types, malformed JSON, oversize lengths, and unsupported
+  versions. `cargo test --locked --test supervisor` passed (3 tests), and
+  `cargo test --locked --test supervisor --no-run --target
+  x86_64-pc-windows-gnu` compiled the Windows named-pipe test.
+- Review: framing is transport-only and cannot spawn commands; it caps
+  allocation before reading a payload. Supervisor ownership and dispatch are
+  intentionally still pending, so no CLI or MCP path can bypass the worker.

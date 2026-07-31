@@ -2,6 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://longrun.local/schemas/ipc-v1.json",
   "title": "Longrun Supervisor IPC V1",
+  "description": "Each message is one UTF-8 JSON payload prefixed with its unsigned 32-bit big-endian byte length. Frames over 1048576 bytes and protocol versions other than 1 are rejected.",
   "oneOf": [
     {
       "$ref": "#/$defs/request"

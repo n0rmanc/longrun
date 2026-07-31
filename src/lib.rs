@@ -4,6 +4,7 @@ pub mod cli;
 pub mod config;
 pub mod error;
 pub mod hook;
+pub mod ipc;
 pub mod output;
 pub mod paths;
 pub mod platform;
