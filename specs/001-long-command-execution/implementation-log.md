@@ -317,3 +317,19 @@ commits required by the constitution.
   `SQLITE_BUSY` failures while a supervisor and worker share WAL state.
   Full log/list/GC routing, completion events, restart handling for
   in-progress workers, guarded resume, and service lifecycle remain pending.
+
+## Explicit Service Artifacts
+
+- 2026-07-31: added explicit launchd, systemd-user, and Windows Startup
+  artifact renderers. `longrun service install` is the only command that
+  writes and registers the matching artifact; `uninstall`, `start`, `stop`,
+  and `status` now dispatch through the platform service manager.
+- Focused checks: service-renderer unit tests cover absolute-path validation,
+  launchd XML escaping, systemd command quoting, Windows batch invocation, and
+  manifest sensitivity. macOS/Linux/Windows code paths pass compile checks.
+  An isolated-home `target/debug/longrun service status` live CLI check
+  returned `not installed` without writing or registering a service.
+- Review: no integration, hook, or ordinary command path enables a background
+  service implicitly. The macOS and Linux managers provide lifecycle control;
+  Windows startup registration is generated, while graceful Windows stop
+  remains tied to the supervisor shutdown endpoint work.

@@ -214,7 +214,7 @@ restart the session, and observe exactly one recovery delivery.
 - [X] T071 [US4] Implement delivery leases, lease expiry, session locks, attempt budgets, and atomic delivery marking in `src/store.rs`
 - [X] T072 [US4] Implement ordered active-hook then SessionStart recovery with stable idempotency envelopes in `src/hook/session_start.rs`
 - [ ] T073 [US4] Implement disabled-by-default guarded `codex exec resume` recovery in `src/supervisor.rs`
-- [ ] T074 [US4] Implement launchd, systemd-user, and Windows per-user service artifact generation in `src/integration/service.rs`
+- [X] T074 [US4] Implement launchd, systemd-user, and Windows per-user service artifact generation in `src/integration/service.rs`
 - [ ] T075 [US4] Wire `daemon` and `service install|uninstall|start|stop|status` commands in `src/cli.rs`
 - [ ] T076 [US4] Run supervisor crash and durable-session live tests, review the diff, and record evidence in `specs/001-long-command-execution/implementation-log.md`
 

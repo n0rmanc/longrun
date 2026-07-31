@@ -18,6 +18,7 @@ use crate::{
         pre_tool_use::{handle_pre_tool_use, now_ms},
         session_start::handle_session_start,
     },
+    integration::service as service_manager,
     output::read_log,
     paths::AppPaths,
     protocol::{
@@ -296,6 +297,7 @@ pub async fn dispatch(
         Command::Cancel(arguments) => cancel(arguments, paths, config),
         Command::Gc(arguments) => gc(arguments, paths, config),
         Command::Daemon(arguments) => daemon(arguments, paths, config, config_path).await,
+        Command::Service(arguments) => service_command(arguments, paths, config_path),
         command => Err(Error::Unavailable(format!(
             "`longrun {}` is not available until the runtime is initialized",
             command.name()
@@ -652,6 +654,57 @@ async fn daemon(
     .run()
     .await?;
     Ok(ExitCode::SUCCESS)
+}
+
+fn service_command(
+    arguments: ServiceArgs,
+    paths: &AppPaths,
+    config_path: &std::path::Path,
+) -> Result<ExitCode> {
+    match arguments.command {
+        ServiceCommand::Install => {
+            service_manager::install(
+                paths,
+                &std::env::current_exe()?,
+                &absolute_path(config_path)?,
+            )?;
+            println!("Installed Longrun durable service.");
+        }
+        ServiceCommand::Uninstall => {
+            service_manager::uninstall(paths)?;
+            println!("Uninstalled Longrun durable service.");
+        }
+        ServiceCommand::Start => {
+            service_manager::start(paths)?;
+            println!("Started Longrun durable service.");
+        }
+        ServiceCommand::Stop => {
+            service_manager::stop(paths)?;
+            println!("Stopped Longrun durable service.");
+        }
+        ServiceCommand::Status => {
+            let status = service_manager::status(paths)?;
+            println!(
+                "Longrun durable service: {}",
+                if status.running {
+                    "running"
+                } else if status.installed {
+                    "installed but stopped"
+                } else {
+                    "not installed"
+                }
+            );
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn absolute_path(path: &std::path::Path) -> Result<PathBuf> {
+    if path.is_absolute() {
+        Ok(path.into())
+    } else {
+        Ok(std::env::current_dir()?.join(path))
+    }
 }
 
 async fn render_direct_result(result: &crate::protocol::JobResult, json: bool) -> Result<ExitCode> {
