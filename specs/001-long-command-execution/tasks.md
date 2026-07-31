@@ -80,7 +80,7 @@ call, and one same-turn bounded completion result.
 - [X] T020 [P] [US1] Add failing receipt encode, HMAC, expiry, mismatch, and single-consumption tests in `tests/receipts.rs`
 - [X] T021 [P] [US1] Add failing PreToolUse no-op, strict-path, shell-rejection, token-rewrite, and wrapper-allow tests in `tests/hooks.rs`
 - [X] T022 [P] [US1] Add failing PostToolUse receipt extraction, pending-context match, same-turn output, and duplicate-call tests in `tests/hooks.rs`
-- [ ] T023 [P] [US1] Add a parameterized active-hook live harness with a 90-second smoke and 30-minute SC-001 acceptance mode in `tests/live/active_session.rs`
+- [X] T023 [P] [US1] Add a parameterized active-hook live harness with a 90-second smoke and 30-minute SC-001 acceptance mode in `tests/live/active_session.rs`
 
 ### Implementation for User Story 1
 

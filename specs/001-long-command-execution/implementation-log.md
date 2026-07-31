@@ -216,3 +216,19 @@ commits required by the constitution.
 - Review: generic `tool_input` avoids failing unrelated tools, structured
   receipt extraction does not scan arbitrary object fields, and only the
   existing receipt/context verification can authorize worker execution.
+
+## Active Hook Live Harness
+
+- 2026-07-31: added `tests/live/active_session.rs`, exposed through
+  `cargo test --test active_session -- --ignored`. Its default live smoke
+  submits a 90-second command via the real PreToolUse rewrite and structured
+  PostToolUse route, then asserts one command start, one sandbox invocation,
+  same-turn `continue: false` delivery, and the bounded `DONE` output. Set
+  `LONGRUN_ACTIVE_SESSION_SECONDS=1800` for the documented SC-001 duration.
+- Live check: ran the default 90-second ignored harness successfully
+  (`1 passed`, `90.84s`). The shorter one-second override also passed while
+  iterating on the harness.
+- Review: the test calls the compiled Longrun binary and the actual worker;
+  only the `codex sandbox` boundary is a controlled pass-through fixture.
+  The 30-minute mode still requires the external Codex event trace review
+  documented in the quickstart to prove zero model-side polling.

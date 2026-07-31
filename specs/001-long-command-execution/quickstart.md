@@ -60,6 +60,13 @@ Run the automated 90-second smoke first:
 cargo test --test active_session -- --ignored --nocapture
 ```
 
+Use the exact SC-001 acceptance duration explicitly:
+
+```bash
+LONGRUN_ACTIVE_SESSION_SECONDS=1800 \
+  cargo test --test active_session -- --ignored --nocapture
+```
+
 Ask Codex:
 
 ```text
@@ -75,10 +82,10 @@ Expected:
 - the same session and turn continue after completion;
 - the result contains a bounded tail and local log paths.
 
-For SC-001 acceptance evidence, rerun the same harness with its documented
-30-minute duration option and confirm the recorded Codex event trace contains
-zero periodic completion-check model requests. The shorter run is the routine
-live smoke; it does not replace the 30-minute acceptance run.
+For SC-001 acceptance evidence, run the 30-minute command above and confirm
+the recorded Codex event trace contains zero periodic completion-check model
+requests. The shorter run is the routine live smoke; it does not replace the
+30-minute acceptance run.
 
 ## Receipt and replay tests
 
