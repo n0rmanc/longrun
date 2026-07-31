@@ -82,3 +82,13 @@ commits required by the constitution.
   and proved `kill -0` could no longer find the recorded descendant PID.
 - Review: this is the shared timeout path used by the runner; Windows Job
   Objects and cancellation wiring remain separate unfinished platform work.
+
+## Direct CLI Contract
+
+- 2026-07-31: added binary-level direct-run checks for successful/failing
+  mixed streams, timeout exit 124, and a non-UTF-8 argument.
+- Focused check: the binary ran under an isolated HOME with a fake Codex
+  sandbox; all direct CLI contract tests passed without relying on ambient
+  Longrun state.
+- Review: `run` remains direct argv by default; `run-shell` stays explicitly
+  configuration-gated and no CLI path bypasses the sandbox worker.

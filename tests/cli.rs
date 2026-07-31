@@ -67,3 +67,87 @@ fn every_documented_command_has_a_parse_shape() {
         Cli::try_parse_from(*arguments).unwrap_or_else(|error| panic!("{arguments:?}: {error}"));
     }
 }
+
+#[cfg(unix)]
+mod integration {
+    use std::{
+        ffi::OsString,
+        fs,
+        os::unix::{ffi::OsStringExt, fs::PermissionsExt},
+        process::Command,
+    };
+    use uuid::Uuid;
+
+    fn setup() -> (std::path::PathBuf, std::path::PathBuf) {
+        let root = std::env::temp_dir().join(format!("longrun-cli-{}", Uuid::now_v7()));
+        fs::create_dir_all(root.join("bin")).expect("root");
+        let codex = root.join("bin/codex");
+        fs::write(
+            &codex,
+            "#!/bin/sh\nwhile [ \"$1\" != \"--\" ]; do shift; done\nshift\nexec \"$@\"\n",
+        )
+        .expect("script");
+        fs::set_permissions(&codex, fs::Permissions::from_mode(0o755)).expect("mode");
+        (root, codex)
+    }
+
+    fn run(
+        root: &std::path::Path,
+        arguments: impl IntoIterator<Item = OsString>,
+    ) -> std::process::Output {
+        let path = format!(
+            "{}:{}",
+            root.join("bin").display(),
+            std::env::var("PATH").expect("PATH")
+        );
+        Command::new(env!("CARGO_BIN_EXE_longrun"))
+            .args(arguments)
+            .env("HOME", root.join("home"))
+            .env("PATH", path)
+            .output()
+            .expect("run longrun")
+    }
+
+    #[test]
+    fn direct_run_preserves_exit_status_and_streams() {
+        let (root, _) = setup();
+        let output = run(
+            &root,
+            [
+                "run",
+                "--",
+                "/bin/sh",
+                "-c",
+                "printf out; printf err >&2; exit 7",
+            ]
+            .map(OsString::from),
+        );
+        assert_eq!(output.status.code(), Some(7));
+        assert_eq!(output.stdout, b"out");
+        assert_eq!(output.stderr, b"err");
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn direct_run_times_out_and_preserves_non_utf8_arguments() {
+        let (root, _) = setup();
+        let timeout = run(
+            &root,
+            ["run", "--timeout", "25", "--", "/bin/sh", "-c", "sleep 1"].map(OsString::from),
+        );
+        assert_eq!(timeout.status.code(), Some(124));
+
+        let output = run(
+            &root,
+            vec![
+                OsString::from("run"),
+                OsString::from("--"),
+                OsString::from("/bin/echo"),
+                OsString::from_vec(vec![0xff]),
+            ],
+        );
+        assert_eq!(output.status.code(), Some(0));
+        assert_eq!(output.stdout, vec![0xff, b'\n']);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+}
