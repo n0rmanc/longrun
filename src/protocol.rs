@@ -2,6 +2,7 @@ use std::ffi::{OsStr, OsString};
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::error::{Error, Result};
@@ -179,6 +180,56 @@ pub fn default_deny_patterns() -> Vec<String> {
         .into_iter()
         .map(str::to_owned)
         .collect()
+}
+
+pub fn sha256_hex(input: &[u8]) -> String {
+    format!("sha256:{:x}", Sha256::digest(input))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PendingState {
+    Pending,
+    Claimed,
+    Consumed,
+    Rejected,
+}
+
+impl PendingState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Claimed => "claimed",
+            Self::Consumed => "consumed",
+            Self::Rejected => "rejected",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PendingSubmission {
+    pub session_id: String,
+    pub turn_id: String,
+    pub tool_use_id: String,
+    pub cwd: NativeString,
+    pub binary_path: NativeString,
+    pub expected_program: NativeString,
+    pub expected_args: Vec<NativeString>,
+    pub command_hash: String,
+    pub hook_token_hash: String,
+    pub created_at_ms: i64,
+    pub expires_at_ms: i64,
+    pub state: PendingState,
+}
+
+impl PendingSubmission {
+    pub fn matches_job(&self, job: &JobSpecification) -> bool {
+        self.cwd == job.cwd
+            && self.expected_program == job.program
+            && self.expected_args == job.args
+            && self.command_hash == job.command_hash
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

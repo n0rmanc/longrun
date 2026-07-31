@@ -77,23 +77,28 @@ call, and one same-turn bounded completion result.
 
 ### Tests for User Story 1
 
-- [ ] T020 [P] [US1] Add failing receipt encode, HMAC, expiry, mismatch, and single-consumption tests in `tests/receipts.rs`
-- [ ] T021 [P] [US1] Add failing PreToolUse no-op, strict-path, shell-rejection, token-rewrite, and wrapper-allow tests in `tests/hooks.rs`
+- [X] T020 [P] [US1] Add failing receipt encode, HMAC, expiry, mismatch, and single-consumption tests in `tests/receipts.rs`
+- [X] T021 [P] [US1] Add failing PreToolUse no-op, strict-path, shell-rejection, token-rewrite, and wrapper-allow tests in `tests/hooks.rs`
 - [ ] T022 [P] [US1] Add failing PostToolUse receipt extraction, pending-context match, same-turn output, and duplicate-call tests in `tests/hooks.rs`
 - [ ] T023 [P] [US1] Add a parameterized active-hook live harness with a 90-second smoke and 30-minute SC-001 acceptance mode in `tests/live/active_session.rs`
 
 ### Implementation for User Story 1
 
-- [ ] T024 [US1] Implement canonical receipt payload encoding, exact-byte HMAC signing, verification, expiry, and zeroized secret handling in `src/receipt.rs`
+- [X] T024 [US1] Implement canonical receipt payload encoding, exact-byte HMAC signing, verification, expiry, and zeroized secret handling in `src/receipt.rs`
 - [ ] T025 [US1] Implement Codex common, PreToolUse, PostToolUse, and SessionStart input deserialization in `src/hook/input.rs`
 - [ ] T026 [US1] Implement Codex allow/deny, continue, system-message, and additional-context output serialization in `src/hook/output.rs`
-- [ ] T027 [US1] Implement strict absolute-binary submission parsing and shell-composition rejection in `src/hook/pre_tool_use.rs`
-- [ ] T028 [US1] Implement one-time hook-token creation, pending-state persistence, targeted updatedInput generation, and wrapper-only allow output in `src/hook/pre_tool_use.rs`
-- [ ] T029 [US1] Implement hidden hook-token claim and receipt-only stdout for `longrun submit` and `submit-shell` in `src/cli.rs`
+- [X] T027 [US1] Implement strict absolute-binary submission parsing and shell-composition rejection in `src/hook/pre_tool_use.rs`
+- [X] T028 [US1] Implement one-time hook-token creation, pending-state persistence, targeted updatedInput generation, and wrapper-only allow output in `src/hook/pre_tool_use.rs`
+- [X] T029 [US1] Implement hidden hook-token claim and receipt-only stdout for `longrun submit` and `submit-shell` in `src/cli.rs`
 - [ ] T030 [US1] Implement PostToolUse receipt extraction, signature/context verification, atomic consumption, and job acceptance in `src/hook/post_tool_use.rs`
 - [ ] T031 [US1] Implement embedded local completion wait and `continue: false` bounded-result delivery in `src/hook/post_tool_use.rs`
 - [ ] T032 [US1] Wire `longrun hook codex pre-tool-use`, `post-tool-use`, and `session-start` dispatch in `src/hook/mod.rs`
 - [ ] T033 [US1] Run hook fixtures and the active-session harness, review the diff, and record evidence in `specs/001-long-command-execution/implementation-log.md`
+
+**Execution dependency**: T030, T031, and the end-to-end portion of T033
+require the single sandboxed worker from T036-T037. T024-T029 and pre-tool
+hook dispatch can be completed first; no PostToolUse path may introduce an
+alternate direct command spawn while that shared runner is incomplete.
 
 **Checkpoint**: US1 passes without `write_stdin`, sleep-status loops, duplicate
 execution, or a second Codex process.
@@ -283,7 +288,9 @@ gates, live scenarios, and platform contracts have evidence.
 
 - **Setup**: no dependencies.
 - **Foundational Runtime**: depends on Setup and blocks all stories.
-- **US1**: depends on Foundational Runtime.
+- **US1**: receipt and PreToolUse routing depend on Foundational Runtime;
+  PostToolUse acceptance, waiting, and its live checkpoint additionally depend
+  on T036-T037's single sandboxed worker.
 - **US2**: depends on Foundational Runtime; may proceed in parallel with US1.
 - **US6**: depends on the US1 receipt path and US2 runner path.
 - **US3**: depends on the shared store and runner; may begin after US2.

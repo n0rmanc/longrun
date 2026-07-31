@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use crate::{
     error::{Error, Result},
-    protocol::{DeliveryState, ExecutionState, JobSpecification},
+    protocol::{DeliveryState, ExecutionState, JobSpecification, PendingState, PendingSubmission},
 };
 
 pub struct Store {
@@ -47,6 +47,10 @@ impl Store {
                 state TEXT NOT NULL,
                 expires_at_ms INTEGER NOT NULL,
                 payload_json TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS consumed_receipts (
+                nonce TEXT PRIMARY KEY,
+                consumed_at_ms INTEGER NOT NULL
              );
              CREATE TABLE IF NOT EXISTS jobs (
                 job_id TEXT PRIMARY KEY,
@@ -127,6 +131,69 @@ impl Store {
         )?;
         transaction.commit()?;
         Ok(())
+    }
+
+    pub fn consume_receipt_once(&mut self, nonce: &str) -> Result<()> {
+        self.connection.execute(
+            "INSERT INTO consumed_receipts (nonce, consumed_at_ms) VALUES (?1, unixepoch() * 1000)",
+            [nonce],
+        )?;
+        Ok(())
+    }
+
+    pub fn save_pending(&mut self, pending: &PendingSubmission) -> Result<()> {
+        self.connection.execute(
+            "INSERT INTO pending_submissions (tool_use_id, state, expires_at_ms, payload_json)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![
+                pending.tool_use_id,
+                pending.state.as_str(),
+                pending.expires_at_ms,
+                serde_json::to_string(pending)?
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn claim_pending_by_token(
+        &mut self,
+        token_hash: &str,
+        now_ms: i64,
+    ) -> Result<PendingSubmission> {
+        let transaction = self.connection.transaction()?;
+        let mut statement = transaction.prepare(
+            "SELECT tool_use_id, payload_json FROM pending_submissions
+             WHERE state = 'pending' AND expires_at_ms > ?1",
+        )?;
+        let rows = statement.query_map([now_ms], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let mut matched = None;
+        for row in rows {
+            let (tool_use_id, payload) = row?;
+            let pending: PendingSubmission = serde_json::from_str(&payload)?;
+            if pending.hook_token_hash == token_hash {
+                matched = Some((tool_use_id, pending));
+                break;
+            }
+        }
+        drop(statement);
+        let (tool_use_id, mut pending) =
+            matched.ok_or_else(|| Error::Denied("invalid or expired hook token".into()))?;
+        let changed = transaction.execute(
+            "UPDATE pending_submissions SET state = 'claimed' WHERE tool_use_id = ?1 AND state = 'pending'",
+            [tool_use_id],
+        )?;
+        if changed != 1 {
+            return Err(Error::Denied("hook token has already been claimed".into()));
+        }
+        pending.state = PendingState::Claimed;
+        transaction.execute(
+            "UPDATE pending_submissions SET payload_json = ?1 WHERE tool_use_id = ?2",
+            params![serde_json::to_string(&pending)?, pending.tool_use_id],
+        )?;
+        transaction.commit()?;
+        Ok(pending)
     }
 
     pub fn execution_state(&self, job_id: Uuid) -> Result<ExecutionState> {
