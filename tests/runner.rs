@@ -7,6 +7,8 @@ mod unix {
         paths::AppPaths,
         protocol::{EnvironmentPolicy, ExecutionMode, JobSpecification, NativeString, ShellMode},
         runner::Runner,
+        store::Store,
+        worker::run_worker_with_runner,
     };
     use uuid::Uuid;
 
@@ -78,6 +80,45 @@ mod unix {
             )
             .expect("stderr"),
             "err"
+        );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[tokio::test]
+    async fn worker_persists_runner_result_before_returning() {
+        let root = std::env::temp_dir().join(format!("longrun-runner-store-{}", Uuid::now_v7()));
+        fs::create_dir_all(&root).expect("root");
+        let paths = AppPaths {
+            config_dir: root.join("config"),
+            data_dir: root.join("data"),
+            state_dir: root.join("state"),
+            log_dir: root.join("logs"),
+            jobs_dir: root.join("jobs"),
+            integration_dir: root.join("integration"),
+            socket_path: root.join("longrun.sock"),
+        };
+        paths.ensure_private_state().expect("state");
+        let job = specification();
+        let database = paths.state_dir.join("longrun.sqlite");
+        Store::open(&database)
+            .expect("store")
+            .create_job(&job)
+            .expect("job");
+        let result = run_worker_with_runner(
+            job.job_id,
+            &database,
+            &Config::default(),
+            &paths,
+            &Runner::with_sandbox_binary(fake_codex(&root)),
+        )
+        .await
+        .expect("worker");
+        assert_eq!(
+            Store::open(&database)
+                .expect("store")
+                .result(job.job_id)
+                .expect("result"),
+            result
         );
         fs::remove_dir_all(root).expect("cleanup");
     }
