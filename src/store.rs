@@ -198,6 +198,68 @@ impl Store {
         Ok(pending)
     }
 
+    pub fn pending(&self, tool_use_id: &str) -> Result<PendingSubmission> {
+        let payload: String = self.connection.query_row(
+            "SELECT payload_json FROM pending_submissions WHERE tool_use_id = ?1",
+            [tool_use_id],
+            |row| row.get(0),
+        )?;
+        Ok(serde_json::from_str(&payload)?)
+    }
+
+    pub fn consume_pending_and_create_job(
+        &mut self,
+        tool_use_id: &str,
+        nonce: &str,
+        job: &JobSpecification,
+    ) -> Result<()> {
+        let transaction = self.connection.transaction()?;
+        let payload: String = transaction.query_row(
+            "SELECT payload_json FROM pending_submissions WHERE tool_use_id = ?1",
+            [tool_use_id],
+            |row| row.get(0),
+        )?;
+        let mut pending: PendingSubmission = serde_json::from_str(&payload)?;
+        if pending.state != PendingState::Claimed {
+            return Err(Error::Denied(
+                "pending submission has not been claimed exactly once".into(),
+            ));
+        }
+        if !pending.matches_job(job) {
+            return Err(Error::Denied(
+                "receipt job does not match pending submission".into(),
+            ));
+        }
+        transaction.execute(
+            "INSERT INTO consumed_receipts (nonce, consumed_at_ms) VALUES (?1, unixepoch() * 1000)",
+            [nonce],
+        )?;
+        transaction.execute(
+            "INSERT INTO jobs (job_id, spec_json, created_at_ms) VALUES (?1, ?2, ?3)",
+            params![
+                job.job_id.to_string(),
+                serde_json::to_string(job)?,
+                job.created_at_ms
+            ],
+        )?;
+        transaction.execute(
+            "INSERT INTO executions (job_id, state) VALUES (?1, ?2)",
+            params![job.job_id.to_string(), ExecutionState::Accepted.as_str()],
+        )?;
+        transaction.execute(
+            "INSERT INTO deliveries (job_id, state) VALUES (?1, ?2)",
+            params![job.job_id.to_string(), DeliveryState::Undelivered.as_str()],
+        )?;
+        pending.state = PendingState::Consumed;
+        transaction.execute(
+            "UPDATE pending_submissions SET state = 'consumed', payload_json = ?1
+             WHERE tool_use_id = ?2 AND state = 'claimed'",
+            params![serde_json::to_string(&pending)?, tool_use_id],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
     pub fn execution_state(&self, job_id: Uuid) -> Result<ExecutionState> {
         let state: String = self.connection.query_row(
             "SELECT state FROM executions WHERE job_id = ?1",

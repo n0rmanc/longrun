@@ -79,7 +79,7 @@ call, and one same-turn bounded completion result.
 
 - [X] T020 [P] [US1] Add failing receipt encode, HMAC, expiry, mismatch, and single-consumption tests in `tests/receipts.rs`
 - [X] T021 [P] [US1] Add failing PreToolUse no-op, strict-path, shell-rejection, token-rewrite, and wrapper-allow tests in `tests/hooks.rs`
-- [ ] T022 [P] [US1] Add failing PostToolUse receipt extraction, pending-context match, same-turn output, and duplicate-call tests in `tests/hooks.rs`
+- [X] T022 [P] [US1] Add failing PostToolUse receipt extraction, pending-context match, same-turn output, and duplicate-call tests in `tests/hooks.rs`
 - [ ] T023 [P] [US1] Add a parameterized active-hook live harness with a 90-second smoke and 30-minute SC-001 acceptance mode in `tests/live/active_session.rs`
 
 ### Implementation for User Story 1
@@ -90,8 +90,8 @@ call, and one same-turn bounded completion result.
 - [X] T027 [US1] Implement strict absolute-binary submission parsing and shell-composition rejection in `src/hook/pre_tool_use.rs`
 - [X] T028 [US1] Implement one-time hook-token creation, pending-state persistence, targeted updatedInput generation, and wrapper-only allow output in `src/hook/pre_tool_use.rs`
 - [X] T029 [US1] Implement hidden hook-token claim and receipt-only stdout for `longrun submit` and `submit-shell` in `src/cli.rs`
-- [ ] T030 [US1] Implement PostToolUse receipt extraction, signature/context verification, atomic consumption, and job acceptance in `src/hook/post_tool_use.rs`
-- [ ] T031 [US1] Implement embedded local completion wait and `continue: false` bounded-result delivery in `src/hook/post_tool_use.rs`
+- [X] T030 [US1] Implement PostToolUse receipt extraction, signature/context verification, atomic consumption, and job acceptance in `src/hook/post_tool_use.rs`
+- [X] T031 [US1] Implement embedded local completion wait and `continue: false` bounded-result delivery in `src/hook/post_tool_use.rs`
 - [ ] T032 [US1] Wire `longrun hook codex pre-tool-use`, `post-tool-use`, and `session-start` dispatch in `src/hook/mod.rs`
 - [ ] T033 [US1] Run hook fixtures and the active-session harness, review the diff, and record evidence in `specs/001-long-command-execution/implementation-log.md`
 

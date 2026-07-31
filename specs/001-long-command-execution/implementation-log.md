@@ -62,3 +62,14 @@ commits required by the constitution.
 - Review: a second worker cannot claim an accepted job. The runner remains the
   sole command-spawn authority; durable routing, process-tree cleanup, and
   PostToolUse waiting remain pending rather than falling back to direct spawn.
+
+## Active Codex Completion
+
+- 2026-07-31: added PostToolUse receipt extraction, exact HMAC/context
+  validation, transactional pending consumption and job creation, local worker
+  wait, and `continue: false` bounded untrusted result delivery.
+- Focused checks: hook fixture includes successful active completion and replay
+  rejection; isolated live flow ran PreToolUse → rewritten submit → PostToolUse
+  through a fake `codex sandbox`, returning one same-turn completion object.
+- Review: PostToolUse never starts a command itself; only the claimed worker
+  does. A replay fails before another job can be created or executed.

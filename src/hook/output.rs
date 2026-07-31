@@ -47,3 +47,19 @@ impl PreToolUseOutput {
         }
     }
 }
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PostHookSpecificOutput {
+    pub hook_event_name: &'static str,
+    pub additional_context: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PostToolUseOutput {
+    #[serde(rename = "continue")]
+    pub continue_processing: bool,
+    pub system_message: String,
+    pub hook_specific_output: PostHookSpecificOutput,
+}

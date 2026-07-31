@@ -13,7 +13,9 @@ use crate::{
     config::Config,
     error::{Error, Result},
     hook::{
+        input::PostToolUseInput,
         input::PreToolUseInput,
+        post_tool_use::handle_post_tool_use,
         pre_tool_use::{handle_pre_tool_use, now_ms},
     },
     paths::AppPaths,
@@ -270,7 +272,7 @@ pub async fn dispatch(cli: Cli, paths: &AppPaths, config: &Config) -> Result<Exi
     match cli.command {
         Command::Submit(arguments) => submit(arguments, paths, config),
         Command::SubmitShell(arguments) => submit_shell(arguments, paths, config),
-        Command::Hook(arguments) => hook(arguments, paths),
+        Command::Hook(arguments) => hook(arguments, paths, config).await,
         Command::Run(arguments) => run(arguments, paths, config).await,
         Command::RunShell(arguments) => run_shell(arguments, paths, config).await,
         Command::Internal(arguments) => internal(arguments, paths, config).await,
@@ -591,7 +593,7 @@ fn issue_submission(
     Ok(ExitCode::SUCCESS)
 }
 
-fn hook(arguments: HookArgs, paths: &AppPaths) -> Result<ExitCode> {
+async fn hook(arguments: HookArgs, paths: &AppPaths, config: &Config) -> Result<ExitCode> {
     match arguments.command {
         HookCommand::Codex(arguments) => match arguments.command {
             CodexHookCommand::PreToolUse => {
@@ -607,11 +609,22 @@ fn hook(arguments: HookArgs, paths: &AppPaths) -> Result<ExitCode> {
                 }
                 Ok(ExitCode::SUCCESS)
             }
-            CodexHookCommand::PostToolUse | CodexHookCommand::SessionStart => {
-                Err(Error::Unavailable(
-                    "Codex post-tool-use recovery runtime is not initialized".into(),
-                ))
+            CodexHookCommand::PostToolUse => {
+                let mut source = String::new();
+                std::io::stdin().read_to_string(&mut source)?;
+                let input: PostToolUseInput = serde_json::from_str(&source)?;
+                if let Some(output) =
+                    handle_post_tool_use(&input, paths, config, &crate::runner::Runner::new())
+                        .await?
+                {
+                    serde_json::to_writer(std::io::stdout(), &output)?;
+                    std::io::stdout().write_all(b"\n")?;
+                }
+                Ok(ExitCode::SUCCESS)
             }
+            CodexHookCommand::SessionStart => Err(Error::Unavailable(
+                "Codex recovery runtime is not initialized".into(),
+            )),
         },
     }
 }
