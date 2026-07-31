@@ -25,7 +25,7 @@ use crate::{
     },
     receipt::{ReceiptPayload, ReceiptSigner},
     store::Store,
-    supervisor::Supervisor,
+    supervisor::{self, Supervisor},
     worker::run_worker,
 };
 
@@ -474,11 +474,6 @@ async fn run(arguments: ExecutionArgs, paths: &AppPaths, config: &Config) -> Res
             ModeArg::Embedded => ExecutionMode::Embedded,
             ModeArg::Durable => ExecutionMode::Durable,
         });
-    if mode == ExecutionMode::Durable {
-        return Err(Error::Unavailable(
-            "durable execution requires the supervisor runtime".into(),
-        ));
-    }
     let timeout_ms = arguments
         .timeout
         .as_deref()
@@ -520,7 +515,11 @@ async fn run(arguments: ExecutionArgs, paths: &AppPaths, config: &Config) -> Res
         created_at_ms: now_ms()?,
         command_hash,
     };
-    execute_direct(job, paths, config, arguments.json).await
+    if mode == ExecutionMode::Durable {
+        execute_durable(job, paths, arguments.json).await
+    } else {
+        execute_direct(job, paths, config, arguments.json).await
+    }
 }
 
 async fn run_shell(arguments: ShellArgs, paths: &AppPaths, config: &Config) -> Result<ExitCode> {
@@ -586,6 +585,18 @@ async fn execute_direct(
     Store::open(&database)?.create_job(&job)?;
     let result = run_worker(job.job_id, &database, config, paths).await?;
     let mut store = Store::open(&database)?;
+    store.transition_delivery(job.job_id, crate::protocol::DeliveryState::HookLeased)?;
+    store.transition_delivery(job.job_id, crate::protocol::DeliveryState::DeliveredInTurn)?;
+    render_direct_result(&result, json).await
+}
+
+async fn execute_durable(job: JobSpecification, paths: &AppPaths, json: bool) -> Result<ExitCode> {
+    supervisor::submit(paths, &job).await?;
+    let status = supervisor::wait(paths, job.job_id).await?;
+    let result = status
+        .result
+        .ok_or_else(|| Error::Unavailable("durable worker completed without a result".into()))?;
+    let mut store = Store::open(paths.state_dir.join("longrun.sqlite"))?;
     store.transition_delivery(job.job_id, crate::protocol::DeliveryState::HookLeased)?;
     store.transition_delivery(job.job_id, crate::protocol::DeliveryState::DeliveredInTurn)?;
     render_direct_result(&result, json).await

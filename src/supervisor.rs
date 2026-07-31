@@ -12,8 +12,8 @@ use crate::{
     ipc::{read_frame, validate_protocol_version, write_frame},
     paths::AppPaths,
     protocol::{
-        ExecutionMode, IpcError, IpcMethod, IpcRequest, IpcResponse, JobSpecification,
-        PROTOCOL_VERSION,
+        ExecutionMode, ExecutionState, IpcError, IpcMethod, IpcRequest, IpcResponse,
+        JobSpecification, PROTOCOL_VERSION,
     },
     store::Store,
 };
@@ -181,36 +181,161 @@ impl Supervisor {
         S: AsyncRead + AsyncWrite + Unpin,
     {
         let request: IpcRequest = read_frame(&mut stream).await?;
-        let response = match self.handle_request(&request) {
+        let response = match self.handle_request(&request).await {
             Ok(result) => response_ok(request.request_id, result),
             Err(error) => response_error(request.request_id, &error),
         };
         write_frame(&mut stream, &response).await
     }
 
-    fn handle_request(&self, request: &IpcRequest) -> Result<serde_json::Value> {
+    async fn handle_request(&self, request: &IpcRequest) -> Result<serde_json::Value> {
         validate_protocol_version(request.protocol_version)?;
         match request.method {
             IpcMethod::Health => Ok(serde_json::json!({
                 "healthy": true,
                 "protocol_version": PROTOCOL_VERSION,
             })),
-            IpcMethod::Submit => {
-                let job: JobSpecification = serde_json::from_value(request.params.clone())?;
-                if job.execution_mode != ExecutionMode::Durable {
-                    return Err(Error::InvalidInput(
-                        "supervisor accepts durable jobs only".into(),
-                    ));
+            IpcMethod::Submit => self.submit(&request.params),
+            IpcMethod::Wait => {
+                let job_id = job_id(&request.params)?;
+                loop {
+                    let status =
+                        Store::open(self.paths.state_dir.join("longrun.sqlite"))?.status(job_id)?;
+                    if status.execution_state.is_terminal() {
+                        return Ok(serde_json::to_value(status)?);
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                 }
-                Store::open(self.paths.state_dir.join("longrun.sqlite"))?.create_job(&job)?;
-                self.spawn_worker(job.job_id);
-                Ok(serde_json::json!({ "job_id": job.job_id }))
+            }
+            IpcMethod::Status => {
+                let status = Store::open(self.paths.state_dir.join("longrun.sqlite"))?
+                    .status(job_id(&request.params)?)?;
+                Ok(serde_json::to_value(status)?)
+            }
+            IpcMethod::Cancel => {
+                let job_id = job_id(&request.params)?;
+                let grace_ms = request
+                    .params
+                    .get("grace_ms")
+                    .and_then(serde_json::Value::as_u64)
+                    .ok_or_else(|| Error::InvalidInput("missing cancellation grace_ms".into()))?;
+                let requested = Store::open(self.paths.state_dir.join("longrun.sqlite"))?
+                    .request_cancellation(job_id, grace_ms, now_ms()?)?;
+                Ok(serde_json::json!({ "cancellation_requested": requested }))
             }
             _ => Err(Error::Unavailable(
                 "supervisor method is not initialized".into(),
             )),
         }
     }
+
+    fn submit(&self, params: &serde_json::Value) -> Result<serde_json::Value> {
+        if params.get("job").is_none()
+            && params.get("protocol_version").is_none()
+            && let Some(job_id) = params.get("job_id")
+        {
+            let job_id = serde_json::from_value(job_id.clone())?;
+            let store = Store::open(self.paths.state_dir.join("longrun.sqlite"))?;
+            let job = store.job(job_id)?;
+            if job.execution_mode != ExecutionMode::Durable {
+                return Err(Error::InvalidInput(
+                    "supervisor accepts durable jobs only".into(),
+                ));
+            }
+            if store.execution_state(job_id)? == ExecutionState::Accepted {
+                self.spawn_worker(job_id);
+            }
+            return Ok(serde_json::json!({ "job_id": job_id }));
+        }
+        let job: JobSpecification = match params.get("job") {
+            Some(job) => serde_json::from_value(job.clone())?,
+            None => serde_json::from_value(params.clone())?,
+        };
+        if job.execution_mode != ExecutionMode::Durable {
+            return Err(Error::InvalidInput(
+                "supervisor accepts durable jobs only".into(),
+            ));
+        }
+        Store::open(self.paths.state_dir.join("longrun.sqlite"))?.create_job(&job)?;
+        self.spawn_worker(job.job_id);
+        Ok(serde_json::json!({ "job_id": job.job_id }))
+    }
+}
+
+pub async fn request(
+    paths: &AppPaths,
+    method: IpcMethod,
+    params: serde_json::Value,
+) -> Result<serde_json::Value> {
+    let request = IpcRequest {
+        protocol_version: PROTOCOL_VERSION,
+        request_id: uuid::Uuid::now_v7(),
+        method,
+        params,
+    };
+    #[cfg(unix)]
+    let response = crate::ipc::unix::request(&paths.socket_path, &request).await?;
+    #[cfg(windows)]
+    let response =
+        crate::ipc::windows::request(&paths.ipc_endpoint().to_string_lossy(), &request).await?;
+    #[cfg(not(any(unix, windows)))]
+    let response = {
+        let _ = request;
+        return Err(Error::Unavailable(
+            "Longrun supervisor is unsupported on this platform".into(),
+        ));
+    };
+    if response.ok {
+        response
+            .result
+            .ok_or_else(|| Error::Unavailable("supervisor returned no result".into()))
+    } else {
+        Err(Error::Unavailable(response.error.map_or_else(
+            || "supervisor rejected the request".into(),
+            |error| error.message,
+        )))
+    }
+}
+
+pub async fn submit(paths: &AppPaths, job: &JobSpecification) -> Result<()> {
+    request(paths, IpcMethod::Submit, serde_json::json!({ "job": job }))
+        .await
+        .map(|_| ())
+}
+
+pub async fn start_existing(paths: &AppPaths, job_id: uuid::Uuid) -> Result<()> {
+    request(
+        paths,
+        IpcMethod::Submit,
+        serde_json::json!({ "job_id": job_id }),
+    )
+    .await
+    .map(|_| ())
+}
+
+pub async fn wait(paths: &AppPaths, job_id: uuid::Uuid) -> Result<crate::store::JobStatus> {
+    serde_json::from_value(request(paths, IpcMethod::Wait, job_params(job_id)).await?)
+        .map_err(Error::from)
+}
+
+fn job_id(params: &serde_json::Value) -> Result<uuid::Uuid> {
+    params
+        .get("job_id")
+        .cloned()
+        .ok_or_else(|| Error::InvalidInput("missing job_id".into()))
+        .and_then(|job_id| serde_json::from_value(job_id).map_err(Error::from))
+}
+
+fn job_params(job_id: uuid::Uuid) -> serde_json::Value {
+    serde_json::json!({ "job_id": job_id })
+}
+
+fn now_ms() -> Result<i64> {
+    time::OffsetDateTime::now_utc()
+        .unix_timestamp_nanos()
+        .div_euclid(1_000_000)
+        .try_into()
+        .map_err(|_| Error::Unavailable("system clock is out of range".into()))
 }
 
 fn response_ok(request_id: uuid::Uuid, result: serde_json::Value) -> IpcResponse {

@@ -20,7 +20,7 @@ pub struct Store {
     connection: Connection,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct JobStatus {
     pub job_id: Uuid,
     pub execution_state: ExecutionState,

@@ -230,8 +230,14 @@ async fn supervisor_recovers_accepted_jobs_and_starts_each_durable_job_once() {
     .await
     .expect("submit");
     assert!(response.ok, "submit response: {response:?}");
-    wait_for_terminal(&database, resumed.job_id).await;
-    wait_for_terminal(&database, submitted.job_id).await;
+    let resumed_status = longrun::supervisor::wait(&paths, resumed.job_id)
+        .await
+        .expect("wait resumed");
+    let submitted_status = longrun::supervisor::wait(&paths, submitted.job_id)
+        .await
+        .expect("wait submitted");
+    assert_eq!(resumed_status.execution_state, ExecutionState::Succeeded);
+    assert_eq!(submitted_status.execution_state, ExecutionState::Succeeded);
     assert_eq!(
         fs::read_to_string(&starts).expect("start count"),
         "xx",
@@ -277,29 +283,6 @@ async fn wait_for_socket(socket: &std::path::Path) {
         sleep(Duration::from_millis(10)).await;
     }
     panic!("supervisor socket was not created");
-}
-
-#[cfg(unix)]
-async fn wait_for_terminal(database: &std::path::Path, job_id: Uuid) {
-    for _ in 0..200 {
-        if Store::open(database)
-            .expect("store")
-            .execution_state(job_id)
-            .expect("state")
-            .is_terminal()
-        {
-            assert_eq!(
-                Store::open(database)
-                    .expect("store")
-                    .execution_state(job_id)
-                    .expect("state"),
-                ExecutionState::Succeeded
-            );
-            return;
-        }
-        sleep(Duration::from_millis(10)).await;
-    }
-    panic!("job {job_id} did not finish");
 }
 
 async fn round_trip<T>(message: &T)

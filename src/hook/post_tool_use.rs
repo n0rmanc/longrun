@@ -12,6 +12,7 @@ use crate::{
     receipt::{ReceiptExpectation, ReceiptSigner},
     runner::Runner,
     store::Store,
+    supervisor,
     worker::run_worker_with_runner,
 };
 
@@ -62,7 +63,15 @@ pub async fn handle_post_tool_use(
         config.recovery.retry_budget,
     )?;
     drop(store);
-    let result = run_worker_with_runner(job.job_id, &database, config, paths, runner).await?;
+    let result = if job.execution_mode == crate::protocol::ExecutionMode::Durable {
+        supervisor::start_existing(paths, job.job_id).await?;
+        supervisor::wait(paths, job.job_id)
+            .await?
+            .result
+            .ok_or_else(|| Error::Unavailable("durable worker completed without a result".into()))?
+    } else {
+        run_worker_with_runner(job.job_id, &database, config, paths, runner).await?
+    };
     let delivered_at_ms = OffsetDateTime::now_utc()
         .unix_timestamp_nanos()
         .div_euclid(1_000_000) as i64;

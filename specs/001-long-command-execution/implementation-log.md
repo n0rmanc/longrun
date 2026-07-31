@@ -290,20 +290,30 @@ commits required by the constitution.
 ## Durable Supervisor Bootstrap
 
 - 2026-07-31: added the first durable supervisor slice: local supervisor
-  startup resumes accepted durable jobs, exposes protocol-versioned health and
-  durable-submit IPC requests, and starts only hidden `longrun internal worker`
-  processes. The supervisor never directly spawns a requested command.
+  startup resumes accepted durable jobs, exposes protocol-versioned health,
+  submit, wait, status, and cancellation IPC requests, and starts only hidden
+  `longrun internal worker` processes. The supervisor never directly spawns a
+  requested command.
+- `longrun run --mode durable` now submits and waits through that socket;
+  durable PostToolUse claims its active delivery lease, asks the supervisor to
+  start the already transactionally accepted job, and waits for the same stored
+  terminal result. Long Unix runtime paths use a stable short socket fallback.
 - Focused checks: a real Unix socket supervisor test starts one persisted
   accepted job after supervisor startup, submits a second durable job over IPC,
   waits for both external workers to complete, and proves exactly two sandbox
   starts. It also verifies the health response and removes the socket on
   controlled shutdown. `cargo test --locked --test supervisor` passed (4
   tests), the Windows supervisor test target compiled, and the full suite
-  passed (57 passed, 2 ignored).
+  passed (58 passed, 2 ignored).
+- Live check: started `target/debug/longrun daemon` with a disposable home and
+  fake `codex sandbox`, then ran `target/debug/longrun run --mode durable
+  --json -- /bin/sh -c 'printf durable'`. It returned the persisted succeeded
+  result with a bounded `durable` tail and the sandbox start log contained
+  exactly one entry.
 - Review: worker execution claims remain the at-most-once boundary, so a
   restart may launch replacement internal workers but only one can reach the
   requested command. Store connections now use a bounded SQLite busy timeout
   and skip schema DDL after reaching schema version 3, avoiding spurious
   `SQLITE_BUSY` failures while a supervisor and worker share WAL state.
-  Completion events, full operation routing, restart handling for
+  Full log/list/GC routing, completion events, restart handling for
   in-progress workers, guarded resume, and service lifecycle remain pending.

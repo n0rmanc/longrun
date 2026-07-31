@@ -28,13 +28,17 @@ impl AppPaths {
         let runtime_dir = BaseDirs::new()
             .and_then(|dirs| dirs.runtime_dir().map(Path::to_path_buf))
             .unwrap_or_else(|| state_dir.clone());
+        #[cfg(unix)]
+        let socket_path = unix_socket_path(&runtime_dir, &data_dir);
+        #[cfg(not(unix))]
+        let socket_path = runtime_dir.join("longrun.sock");
 
         Ok(Self {
             config_dir: project.config_dir().to_path_buf(),
             log_dir: state_dir.join("logs"),
             jobs_dir: state_dir.join("jobs"),
             integration_dir: data_dir.join("codex"),
-            socket_path: runtime_dir.join("longrun.sock"),
+            socket_path,
             data_dir,
             state_dir,
         })
@@ -67,6 +71,18 @@ impl AppPaths {
 }
 
 #[cfg(unix)]
+fn unix_socket_path(runtime_dir: &Path, data_dir: &Path) -> PathBuf {
+    use std::os::unix::ffi::OsStrExt;
+
+    let candidate = runtime_dir.join("longrun.sock");
+    if candidate.as_os_str().as_bytes().len() < 100 {
+        return candidate;
+    }
+    let hash = crate::protocol::sha256_hex(data_dir.as_os_str().as_bytes());
+    std::env::temp_dir().join(format!("longrun-{}.sock", &hash[7..23]))
+}
+
+#[cfg(unix)]
 fn set_private_permissions(path: &Path) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
 
@@ -77,4 +93,22 @@ fn set_private_permissions(path: &Path) -> Result<()> {
 #[cfg(not(unix))]
 fn set_private_permissions(_: &Path) -> Result<()> {
     Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::os::unix::ffi::OsStrExt;
+
+    use super::unix_socket_path;
+
+    #[test]
+    fn long_runtime_directories_get_a_short_stable_socket_name() {
+        let runtime = std::env::temp_dir().join("x".repeat(120));
+        let data = std::env::temp_dir().join("longrun-data");
+        let first = unix_socket_path(&runtime, &data);
+        let second = unix_socket_path(&runtime, &data);
+        assert_eq!(first, second);
+        assert!(first.as_os_str().as_bytes().len() < 100);
+        assert!(first.starts_with(std::env::temp_dir()));
+    }
 }
