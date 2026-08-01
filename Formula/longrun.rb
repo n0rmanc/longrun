@@ -5,20 +5,20 @@ class Longrun < Formula
 
   on_macos do
     on_arm do
-      url "https://github.com/n0rmanc/longrun/releases/download/v0.1.3/longrun-aarch64-apple-darwin.tar.gz"
-      sha256 "a9cf6d4f0fbfa7ecec4378f4fb1fc62b0317714b25f8e53c33f5f4e067a22d8b"
+      url "https://github.com/n0rmanc/longrun/releases/download/v0.1.4/longrun-aarch64-apple-darwin.tar.gz"
+      sha256 "8867e05a81402f7189d1f7d275612960b8bc42fde78b7b32bd1b9a70c4a259b6"
     end
 
     on_intel do
-      url "https://github.com/n0rmanc/longrun/releases/download/v0.1.3/longrun-x86_64-apple-darwin.tar.gz"
-      sha256 "7b3874164a7c128e3f1378caea7724b6b5d3b089dd05fc8411fc7f88f3836f99"
+      url "https://github.com/n0rmanc/longrun/releases/download/v0.1.4/longrun-x86_64-apple-darwin.tar.gz"
+      sha256 "780681645c4ff5d9c38456659b2270e75f8b719f70e5ef66b6c4c190ba9ad575"
     end
   end
 
   on_linux do
     on_intel do
-      url "https://github.com/n0rmanc/longrun/releases/download/v0.1.3/longrun-x86_64-unknown-linux-gnu.tar.gz"
-      sha256 "1d10248dacb03777144e1e8065cf8f433626afb1df89923593ca58a5e4cd6eec"
+      url "https://github.com/n0rmanc/longrun/releases/download/v0.1.4/longrun-x86_64-unknown-linux-gnu.tar.gz"
+      sha256 "f04c7afaf2dd91690765027bd45a449096cf2f0f3f55e52b4a0194ca05162a18"
     end
   end
 
