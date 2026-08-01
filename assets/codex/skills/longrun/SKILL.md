@@ -1,6 +1,6 @@
 ---
 name: longrun
-description: Wait for a known GitHub Actions run or run a finite command expected to take over two minutes, without model polling. Use for gh run watch, long test suites, builds, lints, migrations, and benchmarks; do not use for short commands.
+description: Wait for a known GitHub Actions run, execute a long Oracle browser review, or run a finite command expected to take over two minutes without model polling. Use for gh run watch, Oracle browser runs, long test suites, builds, lints, migrations, and benchmarks; do not use for short commands or Oracle dry-runs.
 ---
 
 # Longrun
@@ -45,12 +45,24 @@ __LONGRUN_EXECUTABLE__ submit -- cargo test --locked
 Wait for a known GitHub Actions run:
 
 ```text
-__LONGRUN_EXECUTABLE__ submit -- gh run watch RUN_ID --repo OWNER/REPO --exit-status
+__LONGRUN_EXECUTABLE__ submit --permission-profile :danger-full-access -- gh run watch RUN_ID --repo OWNER/REPO --exit-status
+```
+
+Run a long Oracle browser review:
+
+```text
+__LONGRUN_EXECUTABLE__ submit --permission-profile :danger-full-access -- oracle --engine browser --model gpt-5.6-sol --browser-thinking-time heavy -p "TASK" --file "src/**"
 ```
 
 If the current project requires RTK, use the supported wrapper:
 
 ```text
 rtk longrun submit -- cargo test --locked
-rtk longrun submit -- gh run watch RUN_ID --repo OWNER/REPO --exit-status
+rtk longrun submit --permission-profile :danger-full-access -- gh run watch RUN_ID --repo OWNER/REPO --exit-status
+rtk longrun submit --permission-profile :danger-full-access -- oracle --engine browser --model gpt-5.6-sol --browser-thinking-time heavy -p "TASK" --file "src/**"
 ```
+
+GitHub Actions waits and Oracle browser reviews need network access. Use either
+command only after the user has explicitly set
+`execution.allow_danger_full_access = true`; otherwise explain that Longrun's
+default `:workspace` profile has no network.

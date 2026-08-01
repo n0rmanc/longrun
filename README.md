@@ -161,10 +161,28 @@ max_log_bytes = 10737418240
 can invoke `codex exec resume` only to deliver a persisted result; it never
 re-runs the requested command.
 
+GitHub Actions waits and Oracle browser reviews need network access. Longrun's
+default `:workspace` profile does not grant it. Opt in before using either:
+
+```toml
+[execution]
+allow_danger_full_access = true
+```
+
+```sh
+longrun submit --permission-profile :danger-full-access -- \
+  gh run watch RUN_ID --repo OWNER/REPO --exit-status
+
+longrun submit --permission-profile :danger-full-access -- \
+  oracle --engine browser --model gpt-5.6-sol --browser-thinking-time heavy \
+  -p "TASK" --file "src/**"
+```
+
 ## Security and recovery
 
 - Longrun runs direct program-and-argument jobs through `codex sandbox` with
-  the selected profile. It never widens permissions automatically.
+  the selected profile. It never widens permissions automatically; network
+  commands require the explicit `:danger-full-access` opt-in above.
 - Secret-like environment names are removed unless explicitly allowed in the
   immutable job policy.
 - Full stdout and stderr remain local. Model-visible results contain bounded,

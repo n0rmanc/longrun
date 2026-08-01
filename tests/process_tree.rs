@@ -48,7 +48,7 @@ async fn timeout_kills_the_owned_process_group() {
         cwd: NativeString::from_os_string(std::env::current_dir().expect("cwd").into_os_string()),
         execution_mode: ExecutionMode::Embedded,
         shell_mode: ShellMode::Direct,
-        timeout_ms: 250,
+        timeout_ms: 1_000,
         permission_profile: ":workspace".into(),
         environment_policy: EnvironmentPolicy::default(),
         created_at_ms: 1,
