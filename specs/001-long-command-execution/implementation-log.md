@@ -615,3 +615,86 @@ commits required by the constitution.
 - Review: the stress loop exercises existing transactional ownership state
   transitions only. It performs no requested-command spawn and verifies that
   replay pressure cannot create a second owner.
+
+## Final Quickstart Evidence
+
+- 2026-08-01 baseline: `cargo build --locked` completed successfully.
+- Direct execution: with isolated `HOME`, XDG, and Codex directories,
+  `target/debug/longrun run -- /bin/sh -c 'printf "out\n"; printf "err\n"
+  >&2; exit 7'` exited `7`. Its stdout was `out`; stderr retained the command's
+  `err` separately (alongside Codex's harmless temporary-home alias warning).
+  The isolated state directory contained `longrun.sqlite` and separate stdout
+  and stderr log files for the job.
+- Integration and preservation: against the real locally installed Codex CLI
+  under isolated `HOME`, `CODEX_HOME`, and XDG directories, `init --codex
+  --json`, `doctor --json`, and `uninstall --codex --json` all succeeded.
+  Doctor reported `healthy=true`; an unrelated sentinel file remained, while
+  the generated plugin and marketplace were removed.
+- Active hook smoke: `cargo test --locked --test active_session -- --ignored
+  --nocapture` passed in 91.32 seconds. The full SC-001-duration harness,
+  `LONGRUN_ACTIVE_SESSION_SECONDS=1800 cargo test --locked --test
+  active_session -- --ignored --nocapture`, passed in 1801.10 seconds. Both
+  harnesses prove one sandbox invocation, one command start, local
+  PostToolUse waiting, and bounded same-turn completion output.
+- Receipt/replay: `cargo test --locked --test hooks --test receipts` passed
+  all 11 tests. The suite covers invalid receipt forms, one-time consumption,
+  shell-composition denial, no-op unrelated Bash calls, and no execution on
+  replay.
+- Timeout and sandbox denial: `cargo test --locked --test process_tree
+  timeout_kills_the_owned_process_group -- --exact --nocapture` passed; so did
+  `cargo test --locked --test security
+  unix::sandbox_denial_does_not_fall_back_to_direct_execution -- --exact
+  --nocapture`.
+- Durable recovery: `LONGRUN_DURABLE_SESSION_SECONDS=1 cargo test --locked
+  --test durable_session -- --ignored --nocapture` passed in 2.33 seconds,
+  including origin termination, one persisted completion, one SessionStart
+  delivery, and no re-execution. A separate isolated service-route exercise
+  used a fake `launchctl`: status before install was `not installed`; install,
+  status, start, stop, and uninstall all succeeded; the generated plist was
+  removed and only the expected launchctl routes were invoked.
+- The remaining manual acceptance step is intentionally not represented as
+  automated evidence: in a user-signed-in Codex session, review and trust
+  `/hooks`, submit the documented 90-second prompt, and inspect Codex's own
+  event trace for zero periodic model requests. The fixture proves Longrun's
+  local behavior over 30 minutes, but it cannot attest to a user's hosted
+  Codex event trace. T101 remains open for that explicit user-session check.
+
+## Final Rust and Platform Validation
+
+- 2026-08-01: all required local gates passed:
+  `cargo fmt --check`; `cargo clippy --all-targets -- -D warnings`; `cargo
+  test --locked` (79 passed, 3 ignored); `cargo check --locked --target
+  x86_64-pc-windows-gnu`; `cargo test --locked --test supervisor --no-run
+  --target x86_64-pc-windows-gnu`; `cargo clippy --all-targets --target
+  x86_64-pc-windows-gnu -- -D warnings`; and `git diff --check`.
+- The Windows checks compile the Windows IPC and Job Object code plus the
+  supervisor integration test target. Native GitHub Actions coverage remains
+  configured for Ubuntu, macOS, and Windows in `.github/workflows/ci.yml`.
+
+## Final Constitution and Security Review
+
+- The implementation matches the final Longrun constitution: hooks wait
+  locally, the CLI remains the product, delivery state is independent of
+  execution state, sandbox policy is fail-closed, and only bounded untrusted
+  output reaches integrations.
+- Spawn review: `rg -n "Command::new|tokio::process::Command" src` shows
+  `src/runner.rs` as the sole requested-command/sandbox spawn. The supervisor
+  can spawn only the hidden `longrun internal worker` and the guarded,
+  delivery-only `codex exec resume`; service and Codex integration paths only
+  manage their respective external tooling. `src/mcp.rs` delegates solely to
+  supervisor IPC and has no runner, worker, supervisor construction, or
+  command-spawn path.
+- The worker heartbeat and supervisor recovery intervals update local durable
+  ownership and delivery state. They do not request model work; the generated
+  skill explicitly forbids status polling and `write_stdin` waiting.
+- `rtk ccc index` completed with 77 files, 724 chunks, and zero errors; a
+  semantic ownership search returned the runner, supervisor, hook, and store
+  boundaries expected by the architecture.
+- Source and asset scans found no `codex-longrun`/`codex_longrun` product-name
+  remnants and no credential-shaped literals. Token and secret matches are
+  limited to receipt hashing, zeroized local receipt-secret handling, and
+  environment deny-pattern enforcement; no credential value is embedded.
+- Dependency review found each direct dependency supports a current product
+  boundary (CLI/configuration, local runtime and IPC, persistence, receipt
+  security, or the specified MCP adapter). No second execution backend or
+  speculative dependency was added.
