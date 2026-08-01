@@ -1,7 +1,8 @@
 {
   "name": "longrun",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Run finite long-running commands without model polling.",
+  "hooks": "./hooks.json",
   "interface": {
     "displayName": "Longrun",
     "shortDescription": "Run finite commands without model polling"

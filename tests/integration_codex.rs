@@ -73,6 +73,7 @@ mod codex {
         )
         .expect("manifest JSON");
         assert_eq!(manifest["name"], "longrun");
+        assert_eq!(manifest["hooks"], "./hooks.json");
         assert_eq!(
             fs::read_to_string(generated_root.join("plugins/longrun/.codex-plugin/plugin.json"))
                 .expect("rendered manifest"),
