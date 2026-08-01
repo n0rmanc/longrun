@@ -30,7 +30,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: rustup toolchain install stable --profile minimal
-      - run: rustup target add ${{ matrix.target }}
+      - run: rustup target add ${{ matrix.target }} --toolchain stable
       - name: Build and verify Unix archive
         if: runner.os != 'Windows'
         shell: bash

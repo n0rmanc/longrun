@@ -561,3 +561,17 @@ commits required by the constitution.
   `contents: write`, and it publishes only the artifacts produced by the build
   matrix. Release creation remains tag-triggered; no release was published
   during implementation.
+
+## Cross-Platform CI and User Documentation
+
+- 2026-08-01: added a native GitHub Actions compile/test/lint matrix for
+  Ubuntu, macOS, and Windows. It has read-only repository permission and uses
+  the stable Rust toolchain.
+- Expanded `README.md` with checksummed release/source installation, Codex
+  integration and repair, command usage, explicit configuration defaults,
+  security boundaries, durable recovery, and source validation commands.
+- Focused checks: parsed both GitHub Actions workflows as YAML, ran
+  `cargo run -- --help`, and verified the documented quickstart link exists.
+- Review: documentation preserves the single worker execution authority, the
+  no-polling rule, explicit sandbox escalation guard, bounded untrusted output,
+  and the fact that durable service installation is opt-in.
