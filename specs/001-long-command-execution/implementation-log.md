@@ -716,3 +716,19 @@ commits required by the constitution.
 - Review: this is test-only portability coverage. It preserves strict
   absolute-path validation and checks each platform serializer without
   changing service installation or any command-execution path.
+- Follow-up Windows CI on the portable service test exposed the next real
+  platform defect: the strict hook-word parser consumed `\` inside double
+  quotes, so a generated `C:\...\longrun.exe` submission could not equal the
+  configured executable. Inside double quotes it now treats a backslash as an
+  escape only for a following quote or backslash; native Windows path
+  separators are retained.
+- Hook tests now build their expected executable from `temp_dir()` on every
+  platform and include an explicit Windows path parser assertion. The
+  SessionStart recovery test likewise uses a native absolute executable path.
+  Focused hook and recovery tests, full `cargo test --locked` (80 passed, 3
+  ignored), host Clippy, Windows GNU hooks/recovery test compilation, and
+  Windows GNU Clippy all passed before the next GitHub Actions retry.
+- Review: the parser remains strict about composition operators and permits no
+  new execution route. The narrow escaping change only preserves the path
+  bytes required to compare a generated Windows hook command with its
+  configured absolute executable.

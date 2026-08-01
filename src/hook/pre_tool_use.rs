@@ -170,7 +170,8 @@ pub fn parse_strict_shell_words(command: &str) -> Result<Vec<String>> {
     let mut quote = None;
     let mut escaped = false;
     let mut active = false;
-    for character in command.chars() {
+    let mut characters = command.chars().peekable();
+    while let Some(character) = characters.next() {
         if escaped {
             word.push(character);
             escaped = false;
@@ -180,7 +181,14 @@ pub fn parse_strict_shell_words(command: &str) -> Result<Vec<String>> {
         match quote {
             Some('\'') if character == '\'' => quote = None,
             Some('"') if character == '"' => quote = None,
-            Some('"') if character == '\\' => escaped = true,
+            Some('"') if character == '\\' => {
+                if matches!(characters.peek(), Some('"') | Some('\\')) {
+                    escaped = true;
+                } else {
+                    word.push(character);
+                    active = true;
+                }
+            }
             Some(_) => {
                 word.push(character);
                 active = true;

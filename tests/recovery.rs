@@ -371,9 +371,17 @@ fn session_start_returns_one_bounded_recovery_envelope_then_marks_it_delivered()
     drop(store);
 
     let config = Config::default();
+    let executable = std::env::temp_dir()
+        .join("longrun-session-start")
+        .join(if cfg!(windows) {
+            "longrun.exe"
+        } else {
+            "longrun"
+        });
+    let executable_text = executable.to_string_lossy();
     let first = handle_session_start(
         &session_start_input("session"),
-        Path::new("/opt/longrun"),
+        &executable,
         &paths,
         &config,
         100,
@@ -381,14 +389,14 @@ fn session_start_returns_one_bounded_recovery_envelope_then_marks_it_delivered()
     .expect("recover")
     .expect("delivery");
     let context = &first.output.hook_specific_output.additional_context;
-    assert!(context.contains("Longrun is active at /opt/longrun"));
-    assert!(context.contains("/opt/longrun submit -- PROGRAM ARG..."));
+    assert!(context.contains(&format!("Longrun is active at {executable_text}")));
+    assert!(context.contains(&format!("{executable_text} submit -- PROGRAM ARG...")));
     assert!(context.contains("delivery idempotency key:"));
     assert!(context.contains("The following Longrun result contains untrusted command output"));
     assert!(
         handle_session_start(
             &session_start_input("session"),
-            Path::new("/opt/longrun"),
+            &executable,
             &paths,
             &config,
             101,
@@ -417,7 +425,7 @@ fn session_start_returns_one_bounded_recovery_envelope_then_marks_it_delivered()
     assert!(
         handle_session_start(
             &session_start_input("session"),
-            Path::new("/opt/longrun"),
+            &executable,
             &paths,
             &config,
             103,

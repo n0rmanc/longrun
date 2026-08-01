@@ -1,9 +1,9 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use longrun::{
     hook::{
         input::{CodexCommonInput, PreToolUseInput},
-        pre_tool_use::handle_pre_tool_use,
+        pre_tool_use::{handle_pre_tool_use, parse_strict_shell_words},
     },
     store::Store,
 };
@@ -29,6 +29,20 @@ fn common(hook_event_name: &str) -> CodexCommonInput {
         model: "gpt-test".into(),
         permission_mode: "default".into(),
     }
+}
+
+fn test_binary() -> PathBuf {
+    std::env::temp_dir()
+        .join("longrun-hook-tests")
+        .join(if cfg!(windows) {
+            "longrun.exe"
+        } else {
+            "longrun"
+        })
+}
+
+fn command(binary: &Path, arguments: &str) -> String {
+    format!("\"{}\" {arguments}", binary.display())
 }
 
 #[cfg(unix)]
@@ -272,17 +286,18 @@ fn codex_hook_outputs_use_current_wire_shape() {
 #[test]
 fn pre_tool_use_ignores_unrelated_or_wrong_binary_commands() {
     let mut store = Store::open_in_memory().expect("store");
-    let binary = Path::new("/opt/longrun");
+    let binary = test_binary();
+    let other_binary = binary.with_file_name("other-longrun");
 
     assert!(
-        handle_pre_tool_use(&input("echo hello"), binary, &mut store, 1)
+        handle_pre_tool_use(&input("echo hello"), &binary, &mut store, 1)
             .expect("hook")
             .is_none()
     );
     assert!(
         handle_pre_tool_use(
-            &input("\"/other/longrun\" submit -- echo hello"),
-            binary,
+            &input(&command(&other_binary, "submit -- echo hello")),
+            &binary,
             &mut store,
             1
         )
@@ -294,9 +309,10 @@ fn pre_tool_use_ignores_unrelated_or_wrong_binary_commands() {
 #[test]
 fn pre_tool_use_rewrites_only_verified_submit_wrapper() {
     let mut store = Store::open_in_memory().expect("store");
+    let binary = test_binary();
     let output = handle_pre_tool_use(
-        &input("\"/opt/longrun\" submit -- echo --literal"),
-        Path::new("/opt/longrun"),
+        &input(&command(&binary, "submit -- echo --literal")),
+        &binary,
         &mut store,
         1,
     )
@@ -319,9 +335,10 @@ fn pre_tool_use_rewrites_only_verified_submit_wrapper() {
 #[test]
 fn pre_tool_use_rejects_outer_shell_composition() {
     let mut store = Store::open_in_memory().expect("store");
+    let binary = test_binary();
     let output = handle_pre_tool_use(
-        &input("\"/opt/longrun\" submit -- echo ok; rm -rf /"),
-        Path::new("/opt/longrun"),
+        &input(&command(&binary, "submit -- echo ok; rm -rf /")),
+        &binary,
         &mut store,
         1,
     )
@@ -337,9 +354,10 @@ fn pre_tool_use_rejects_outer_shell_composition() {
 #[test]
 fn pre_tool_use_accepts_explicit_submit_shell_only_with_a_script() {
     let mut store = Store::open_in_memory().expect("store");
+    let binary = test_binary();
     let output = handle_pre_tool_use(
-        &input("\"/opt/longrun\" submit-shell --script 'echo ok'"),
-        Path::new("/opt/longrun"),
+        &input(&command(&binary, "submit-shell --script 'echo ok'")),
+        &binary,
         &mut store,
         1,
     )
@@ -351,12 +369,27 @@ fn pre_tool_use_accepts_explicit_submit_shell_only_with_a_script() {
     );
     assert!(
         handle_pre_tool_use(
-            &input("\"/opt/longrun\" submit-shell"),
-            Path::new("/opt/longrun"),
+            &input(&command(&binary, "submit-shell")),
+            &binary,
             &mut store,
             1
         )
         .expect("hook")
         .is_some()
+    );
+}
+
+#[test]
+fn strict_shell_parser_preserves_windows_path_separators_inside_quotes() {
+    assert_eq!(
+        parse_strict_shell_words(r#""C:\Longrun\longrun.exe" submit -- echo ok"#)
+            .expect("parse Windows path"),
+        vec![
+            r"C:\Longrun\longrun.exe".to_owned(),
+            "submit".to_owned(),
+            "--".to_owned(),
+            "echo".to_owned(),
+            "ok".to_owned(),
+        ]
     );
 }
