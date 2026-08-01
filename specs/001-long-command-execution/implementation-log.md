@@ -732,3 +732,12 @@ commits required by the constitution.
   new execution route. The narrow escaping change only preserves the path
   bytes required to compare a generated Windows hook command with its
   configured absolute executable.
+- A subsequent Windows run reached the file-backed SQLite migration tests and
+  found their Unix-only cleanup assumption: Windows does not permit removing a
+  WAL directory while `Store` or a direct SQLite `Connection` still owns a
+  file handle. Those tests now explicitly drop every file-backed handle before
+  removing their temporary directory.
+- Focused `tests/store.rs` validation, full `cargo test --locked` (80 passed,
+  3 ignored), host Clippy, Windows GNU store-test compilation, and Windows GNU
+  Clippy all passed. The change is test cleanup only; it does not alter SQLite
+  persistence, WAL, or runtime resource ownership.
