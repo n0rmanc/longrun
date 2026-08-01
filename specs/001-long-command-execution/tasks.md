@@ -271,7 +271,7 @@ user state.
 - [X] T096 [P] Add MCP adapter contract tests proving no independent spawn path in `tests/mcp.rs`
 - [X] T097 [P] Add macOS, Linux, and Windows compile/test matrix configuration in `.github/workflows/ci.yml`
 - [X] T098 [P] Add user installation, configuration, security, recovery, and command documentation in `README.md`
-- [ ] T099 Add performance tests for submit p95, hook no-op p95, status p95, completion latency, and model byte bounds in `tests/performance.rs`
+- [X] T099 Add performance tests for submit p95, hook no-op p95, status p95, completion latency, and model byte bounds in `tests/performance.rs`
 - [ ] T100 Add a 100-iteration execution/replay/delivery stress test covering SC-002 and SC-006 in `tests/recovery.rs`
 - [ ] T101 Run every quickstart scenario and record exact commands and outcomes in `specs/001-long-command-execution/implementation-log.md`
 - [ ] T102 Run `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --locked`, and platform compile checks; record results in `specs/001-long-command-execution/implementation-log.md`

@@ -591,3 +591,15 @@ commits required by the constitution.
 - Review: enabling rmcp's standard tool macros adds no execution backend. The
   MCP process cannot submit or start requested commands; unavailable
   supervisors return tool errors instead of falling back to local execution.
+
+## Local Performance Bounds
+
+- 2026-08-01: added repeatable p95 checks for verified submit-hook routing,
+  unrelated hook no-op handling, local status reads, and bounded completion
+  context generation. The check uses twenty samples per operation and asserts
+  a conservative 100 ms local p95 ceiling.
+- Focused/live check: `cargo test --locked --test performance -- --nocapture`
+  passed. The synthetic 64 KiB combined result tail remained within the
+  configured 1 KiB model context limit.
+- Review: the test measures local routing and rendering only; it does not
+  introduce polling, sleeps, or a second execution path.
