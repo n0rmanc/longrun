@@ -6,6 +6,7 @@ pub mod error;
 pub mod hook;
 pub mod integration;
 pub mod ipc;
+pub mod mcp;
 pub mod output;
 pub mod paths;
 pub mod platform;

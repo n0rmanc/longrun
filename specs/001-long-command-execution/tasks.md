@@ -267,8 +267,8 @@ user state.
 
 **Purpose**: Prove the final architecture across interfaces and platforms.
 
-- [ ] T095 [P] Add a structured MCP status/wait/logs/cancel adapter and `longrun mcp` dispatch that delegate only to supervisor IPC in `src/mcp.rs` and `src/cli.rs`
-- [ ] T096 [P] Add MCP adapter contract tests proving no independent spawn path in `tests/mcp.rs`
+- [X] T095 [P] Add a structured MCP status/wait/logs/cancel adapter and `longrun mcp` dispatch that delegate only to supervisor IPC in `src/mcp.rs` and `src/cli.rs`
+- [X] T096 [P] Add MCP adapter contract tests proving no independent spawn path in `tests/mcp.rs`
 - [X] T097 [P] Add macOS, Linux, and Windows compile/test matrix configuration in `.github/workflows/ci.yml`
 - [X] T098 [P] Add user installation, configuration, security, recovery, and command documentation in `README.md`
 - [ ] T099 Add performance tests for submit p95, hook no-op p95, status p95, completion latency, and model byte bounds in `tests/performance.rs`

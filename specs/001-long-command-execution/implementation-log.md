@@ -575,3 +575,19 @@ commits required by the constitution.
 - Review: documentation preserves the single worker execution authority, the
   no-polling rule, explicit sandbox escalation guard, bounded untrusted output,
   and the fact that durable service installation is opt-in.
+
+## Supervisor-Only MCP Adapter
+
+- 2026-08-01: added `longrun mcp`, a stdio MCP server with `status`, `wait`,
+  `logs`, and `cancel` tools. Every tool delegates to the existing supervisor
+  IPC client; logs retain the supervisor chunk boundary and are returned as
+  explicitly untrusted base64url bytes.
+- Focused checks: `cargo test --locked --test mcp --test cli` verifies the tool
+  surface and asserts the MCP adapter contains no worker, runner, supervisor
+  construction, or command spawn path.
+- Live check: started `longrun mcp` with isolated local state, completed the
+  MCP initialize handshake, and verified `tools/list` exposed exactly the four
+  supervisor-backed tools.
+- Review: enabling rmcp's standard tool macros adds no execution backend. The
+  MCP process cannot submit or start requested commands; unavailable
+  supervisors return tool errors instead of falling back to local execution.

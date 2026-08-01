@@ -19,6 +19,7 @@ use crate::{
         session_start::handle_session_start,
     },
     integration::{codex, service as service_manager},
+    mcp,
     output::read_log_chunk,
     paths::AppPaths,
     protocol::{
@@ -66,31 +67,6 @@ pub enum Command {
     #[command(hide = true)]
     Hook(HookArgs),
     Mcp,
-}
-
-impl Command {
-    pub const fn name(&self) -> &'static str {
-        match self {
-            Self::Run(_) => "run",
-            Self::Submit(_) => "submit",
-            Self::RunShell(_) => "run-shell",
-            Self::SubmitShell(_) => "submit-shell",
-            Self::Wait(_) => "wait",
-            Self::Status(_) => "status",
-            Self::List(_) => "list",
-            Self::Logs(_) => "logs",
-            Self::Cancel(_) => "cancel",
-            Self::Gc(_) => "gc",
-            Self::Init(_) => "init",
-            Self::Uninstall(_) => "uninstall",
-            Self::Doctor(_) => "doctor",
-            Self::Daemon(_) => "daemon",
-            Self::Service(_) => "service",
-            Self::Internal(_) => "internal",
-            Self::Hook(_) => "hook",
-            Self::Mcp => "mcp",
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -299,12 +275,12 @@ pub async fn dispatch(
         Command::Init(arguments) => init(arguments, paths),
         Command::Uninstall(arguments) => uninstall(arguments, paths),
         Command::Doctor(arguments) => doctor(arguments, paths, config).await,
+        Command::Mcp => {
+            mcp::run(paths, config).await?;
+            Ok(ExitCode::SUCCESS)
+        }
         Command::Daemon(arguments) => daemon(arguments, paths, config, config_path).await,
         Command::Service(arguments) => service_command(arguments, paths, config_path).await,
-        command => Err(Error::Unavailable(format!(
-            "`longrun {}` is not available until the runtime is initialized",
-            command.name()
-        ))),
     }
 }
 
