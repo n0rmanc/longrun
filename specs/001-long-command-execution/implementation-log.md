@@ -698,3 +698,21 @@ commits required by the constitution.
   boundary (CLI/configuration, local runtime and IPC, persistence, receipt
   security, or the specified MCP adapter). No second execution backend or
   speculative dependency was added.
+
+## Windows CI Repair
+
+- 2026-08-01: GitHub Actions run `30677066405` exposed a Windows-only test
+  defect: `service_artifacts_preserve_absolute_binary_and_config_paths` used
+  Unix `/opt/...` paths, which Windows correctly treats as relative. The test
+  now derives absolute paths from `std::env::temp_dir()` and builds expected
+  launchd, systemd, and batch fragments with the same platform-escaping
+  helpers as the production artifacts.
+- Focused checks passed for both service artifact tests. Full host validation
+  then passed: `cargo fmt --check`, `cargo test --locked` (79 passed, 3
+  ignored), and `cargo clippy --all-targets -- -D warnings`. Windows GNU
+  validation passed with `cargo test --locked --lib --no-run --target
+  x86_64-pc-windows-gnu` and `cargo clippy --all-targets --target
+  x86_64-pc-windows-gnu -- -D warnings`.
+- Review: this is test-only portability coverage. It preserves strict
+  absolute-path validation and checks each platform serializer without
+  changing service installation or any command-execution path.

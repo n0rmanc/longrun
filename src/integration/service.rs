@@ -348,33 +348,38 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        SERVICE_LABEL, launchd_plist, manifest_hash, systemd_user_unit, windows_startup_script,
+        SERVICE_LABEL, batch_escape, launchd_plist, manifest_hash, systemd_escape,
+        systemd_user_unit, windows_startup_script, xml_escape,
     };
 
     #[test]
     fn service_artifacts_preserve_absolute_binary_and_config_paths() {
-        let executable = Path::new("/opt/Longrun & Co/longrun");
-        let config = Path::new("/opt/Longrun & Co/config.toml");
+        let root = std::env::temp_dir().join("Longrun & Co");
+        let executable = root.join("longrun");
+        let config = root.join("config.toml");
+        let executable = executable.as_path();
+        let config = config.as_path();
+        let executable_text = executable.to_string_lossy();
 
         let launchd = launchd_plist(executable, config).expect("launchd");
         assert!(launchd.contains(SERVICE_LABEL));
-        assert!(launchd.contains("/opt/Longrun &amp; Co/longrun"));
+        assert!(launchd.contains(&xml_escape(&executable_text)));
         assert!(launchd.contains("<string>daemon</string>"));
 
         let systemd = systemd_user_unit(executable, config).expect("systemd");
-        assert!(systemd.contains("ExecStart=\"/opt/Longrun & Co/longrun\""));
+        assert!(systemd.contains(&format!("ExecStart={}", systemd_escape(&executable_text))));
         assert!(systemd.contains("daemon --foreground"));
 
         let windows = windows_startup_script(executable, config).expect("windows");
-        assert!(windows.contains("\"/opt/Longrun & Co/longrun\" --config"));
+        assert!(windows.contains(&format!("\"{}\" --config", batch_escape(&executable_text))));
         assert_ne!(
             manifest_hash(executable, config).expect("hash"),
-            manifest_hash(Path::new("/opt/longrun"), config).expect("different hash")
+            manifest_hash(&std::env::temp_dir().join("longrun"), config).expect("different hash")
         );
     }
 
     #[test]
     fn service_artifacts_reject_relative_paths() {
-        assert!(launchd_plist(Path::new("longrun"), Path::new("/tmp/config")).is_err());
+        assert!(launchd_plist(Path::new("longrun"), &std::env::temp_dir().join("config")).is_err());
     }
 }
