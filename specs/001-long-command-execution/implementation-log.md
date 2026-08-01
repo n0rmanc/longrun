@@ -603,3 +603,15 @@ commits required by the constitution.
   configured 1 KiB model context limit.
 - Review: the test measures local routing and rendering only; it does not
   introduce polling, sleeps, or a second execution path.
+
+## Execution and Delivery Stress
+
+- 2026-08-01: added a 100-iteration in-memory stress test that rejects a
+  second execution claim, records one terminal result, rejects a concurrent
+  delivery claim, and reaches one delivered state in every iteration.
+- Focused/live check: `cargo test --locked --test recovery
+  one_hundred_execution_replay_and_delivery_iterations_preserve_single_owners
+  -- --exact --nocapture` passed.
+- Review: the stress loop exercises existing transactional ownership state
+  transitions only. It performs no requested-command spawn and verifies that
+  replay pressure cannot create a second owner.

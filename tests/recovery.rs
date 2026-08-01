@@ -156,6 +156,82 @@ fn session_start_leases_are_exclusive_expire_and_keep_one_idempotency_key() {
 }
 
 #[test]
+fn one_hundred_execution_replay_and_delivery_iterations_preserve_single_owners() {
+    let mut store = Store::open_in_memory().expect("store");
+    for iteration in 0..100 {
+        let job = specification();
+        store
+            .create_job_for_session(&job, Some("stress-session"))
+            .expect("job");
+        assert!(
+            store.claim_execution(job.job_id, "worker-a").is_ok(),
+            "iteration {iteration}"
+        );
+        assert!(
+            store.claim_execution(job.job_id, "worker-b").is_err(),
+            "iteration {iteration}"
+        );
+        store.mark_running(job.job_id, "worker-a").expect("running");
+        store
+            .finish_execution(
+                &JobResult {
+                    job_id: job.job_id,
+                    terminal_state: ExecutionState::Succeeded,
+                    exit_code: Some(0),
+                    signal: None,
+                    duration_ms: 1,
+                    stdout_log: NativeString::from_os_string("/tmp/stdout".into()),
+                    stderr_log: NativeString::from_os_string("/tmp/stderr".into()),
+                    stdout_tail: String::new(),
+                    stderr_tail: String::new(),
+                    stdout_truncated: false,
+                    stderr_truncated: false,
+                    result_hash: format!("sha256:stress-{iteration}"),
+                    completed_at_ms: iteration,
+                },
+                "worker-a",
+            )
+            .expect("finish");
+        let lease = store
+            .claim_delivery(
+                job.job_id,
+                "stress-session",
+                DeliveryState::SessionStartLeased,
+                "delivery-a",
+                iteration,
+                10,
+                3,
+            )
+            .expect("lease");
+        assert!(
+            store
+                .claim_delivery(
+                    job.job_id,
+                    "stress-session",
+                    DeliveryState::SessionStartLeased,
+                    "delivery-b",
+                    iteration,
+                    10,
+                    3,
+                )
+                .is_err(),
+            "iteration {iteration}"
+        );
+        store
+            .finish_delivery(
+                job.job_id,
+                lease.lease_id,
+                DeliveryState::DeliveredOnStart,
+                iteration,
+            )
+            .expect("deliver");
+        let status = store.status(job.job_id).expect("status");
+        assert_eq!(status.execution_state, ExecutionState::Succeeded);
+        assert_eq!(status.delivery_state, DeliveryState::DeliveredOnStart);
+    }
+}
+
+#[test]
 fn resume_retries_respect_the_budget_and_never_hold_two_delivery_leases() {
     let mut store = Store::open_in_memory().expect("store");
     let job = specification();
