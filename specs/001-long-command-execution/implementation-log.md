@@ -741,3 +741,6 @@ commits required by the constitution.
   3 ignored), host Clippy, Windows GNU store-test compilation, and Windows GNU
   Clippy all passed. The change is test cleanup only; it does not alter SQLite
   persistence, WAL, or runtime resource ownership.
+- Final remote confirmation: GitHub Actions CI run `30678844053` for commit
+  `47f7ff2` passed on Ubuntu (1m28s), macOS (1m08s), and Windows (2m49s).
+  Windows ran formatting, the full native test suite, and Clippy successfully.
