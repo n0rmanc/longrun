@@ -36,7 +36,8 @@
             "logs",
             "cancel",
             "gc",
-            "health"
+            "health",
+            "shutdown"
           ]
         },
         "params": {

@@ -297,7 +297,7 @@ pub async fn dispatch(
         Command::Cancel(arguments) => cancel(arguments, paths, config).await,
         Command::Gc(arguments) => gc(arguments, paths, config).await,
         Command::Daemon(arguments) => daemon(arguments, paths, config, config_path).await,
-        Command::Service(arguments) => service_command(arguments, paths, config_path),
+        Command::Service(arguments) => service_command(arguments, paths, config_path).await,
         command => Err(Error::Unavailable(format!(
             "`longrun {}` is not available until the runtime is initialized",
             command.name()
@@ -688,7 +688,7 @@ async fn daemon(
     Ok(ExitCode::SUCCESS)
 }
 
-fn service_command(
+async fn service_command(
     arguments: ServiceArgs,
     paths: &AppPaths,
     config_path: &std::path::Path,
@@ -711,11 +711,25 @@ fn service_command(
             println!("Started Longrun durable service.");
         }
         ServiceCommand::Stop => {
+            #[cfg(windows)]
+            if service_manager::status(paths)?.installed {
+                match supervisor::shutdown(paths).await {
+                    Ok(()) => {}
+                    Err(error) if supervisor_offline(&error) => {}
+                    Err(error) => return Err(error),
+                }
+            }
+            #[cfg(not(windows))]
             service_manager::stop(paths)?;
             println!("Stopped Longrun durable service.");
         }
         ServiceCommand::Status => {
             let status = service_manager::status(paths)?;
+            #[cfg(windows)]
+            let status = service_manager::ServiceStatus {
+                installed: status.installed,
+                running: status.installed && supervisor::healthy(paths).await.unwrap_or(false),
+            };
             println!(
                 "Longrun durable service: {}",
                 if status.running {

@@ -13,7 +13,7 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     process::Command,
-    sync::{Semaphore, watch},
+    sync::{Notify, Semaphore, watch},
     time::{Duration, Instant, MissedTickBehavior, interval, sleep},
 };
 
@@ -53,6 +53,7 @@ pub struct Supervisor {
     active_jobs: Arc<Mutex<HashSet<uuid::Uuid>>>,
     connections: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
     stopping: Arc<AtomicBool>,
+    shutdown_notify: Arc<Notify>,
     termination_grace_ms: u64,
     max_age_days: u32,
     max_log_bytes: u64,
@@ -83,6 +84,7 @@ impl Supervisor {
             active_jobs: Arc::new(Mutex::new(HashSet::new())),
             connections: Arc::new(Mutex::new(Vec::new())),
             stopping: Arc::new(AtomicBool::new(false)),
+            shutdown_notify: Arc::new(Notify::new()),
             termination_grace_ms: config.execution.termination_grace_ms,
             max_age_days: config.retention.max_age_days,
             max_log_bytes: config.retention.max_log_bytes,
@@ -386,6 +388,9 @@ impl Supervisor {
                         break Ok(());
                     }
                 }
+                _ = self.shutdown_notify.notified() => {
+                    break Ok(());
+                }
                 connection = listener.accept() => {
                     let (stream, _) = connection?;
                     self.spawn_connection(stream);
@@ -419,6 +424,9 @@ impl Supervisor {
                     if changed.is_err() || *shutdown.borrow() {
                         return Ok(());
                     }
+                }
+                _ = self.shutdown_notify.notified() => {
+                    return Ok(());
                 }
                 connected = listener.connect() => {
                     connected?;
@@ -467,6 +475,10 @@ impl Supervisor {
                 "healthy": true,
                 "protocol_version": PROTOCOL_VERSION,
             })),
+            IpcMethod::Shutdown => {
+                self.shutdown_notify.notify_one();
+                Ok(serde_json::json!({ "shutting_down": true }))
+            }
             IpcMethod::Submit => self.submit(&request.params),
             IpcMethod::Wait => {
                 let job_id = job_id(&request.params)?;
@@ -737,6 +749,27 @@ pub async fn gc(paths: &AppPaths, dry_run: bool) -> Result<Vec<uuid::Uuid>> {
         .cloned()
         .ok_or_else(|| Error::Unavailable("supervisor returned no garbage-collection jobs".into()))
         .and_then(|job_ids| serde_json::from_value(job_ids).map_err(Error::from))
+}
+
+pub async fn shutdown(paths: &AppPaths) -> Result<()> {
+    request(paths, IpcMethod::Shutdown, serde_json::Value::Null)
+        .await
+        .and_then(|response| {
+            response
+                .get("shutting_down")
+                .and_then(serde_json::Value::as_bool)
+                .filter(|shutting_down| *shutting_down)
+                .ok_or_else(|| Error::Unavailable("supervisor did not acknowledge shutdown".into()))
+        })
+        .map(|_| ())
+}
+
+pub async fn healthy(paths: &AppPaths) -> Result<bool> {
+    request(paths, IpcMethod::Health, serde_json::Value::Null)
+        .await?
+        .get("healthy")
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(|| Error::Unavailable("supervisor returned no health state".into()))
 }
 
 fn job_id(params: &serde_json::Value) -> Result<uuid::Uuid> {

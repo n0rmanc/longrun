@@ -420,7 +420,7 @@ commits required by the constitution.
 
 ## Durable Codex Termination and Restart Harness
 
-- 2026-07-31: added the ignored `durable_session` live harness, run with
+- 2026-08-01: added the ignored `durable_session` live harness, run with
   `LONGRUN_DURABLE_SESSION_SECONDS=90 cargo test --test durable_session --
   --ignored`. It invokes the real PreToolUse rewrite, executes the generated
   receipt command, starts a real PostToolUse process, and terminates that
@@ -441,7 +441,7 @@ commits required by the constitution.
 
 ## Guarded Optional Codex Resume
 
-- 2026-07-31: added optional `codex exec resume SESSION_ID PROMPT` recovery to
+- 2026-08-01: added optional `codex exec resume SESSION_ID PROMPT` recovery to
   the supervisor. It remains disabled by the default
   `recovery.auto_resume = false`; when enabled, the supervisor first expires
   old leases, then atomically claims an undelivered session result with the
@@ -459,3 +459,39 @@ commits required by the constitution.
 - Review: the optional Codex process is delivery-only. It reads a persisted
   terminal result and cannot submit, retry, or spawn the requested command;
   worker execution claims remain the at-most-once boundary.
+
+## Supervisor and Service Lifecycle Wiring
+
+- 2026-08-01: completed the daemon and service command boundary. `daemon
+  --foreground` runs the shared supervisor; service install, uninstall, start,
+  stop, and status dispatch only to the platform service manager. Windows
+  service status now probes supervisor health, and stop requests the new
+  user-local IPC shutdown endpoint.
+- The shutdown endpoint stops listener acceptance before the existing
+  cancellation and worker-drain path runs. It is available only over the
+  per-user IPC transport and returns an acknowledgement before daemon teardown.
+- Focused checks: the durable-worker shutdown test now invokes the public IPC
+  shutdown client and still receives the persisted `cancelled` result. The
+  Windows supervisor test target and full Windows clippy build compile.
+- Live check: with an isolated home and a fake `launchctl`, `service status`,
+  failed start-before-install, install, status, start, stop, and uninstall all
+  followed their expected routes and created then removed the generated plist.
+  An isolated foreground daemon bound and drained its socket on SIGTERM.
+- Review: the lifecycle interface controls only the existing supervisor. It
+  does not expose a requested-command spawn path, and Windows stop shares the
+  same graceful worker cleanup as signal-driven shutdown.
+
+## Supervisor Crash and Durable Recovery Evidence
+
+- 2026-08-01: ran the ignored durable-session process harness at
+  `LONGRUN_DURABLE_SESSION_SECONDS=1`; it passed in 2.15 seconds after
+  terminating the originating PostToolUse process and recovering one result
+  through the real SessionStart CLI.
+- In a separate isolated daemon run, a durable `sleep 2; printf recovered`
+  worker started once, its first supervisor received SIGKILL, and a replacement
+  daemon reclaimed the local socket. The job reached persisted `succeeded`
+  state, while the fake sandbox start record remained exactly `x`.
+- Review: daemon loss disconnects an existing wait client, but never affects
+  the independent worker's execution claim. A replacement supervisor adopts
+  fresh heartbeating work or reads the already-persisted terminal result; it
+  never replays the requested command.

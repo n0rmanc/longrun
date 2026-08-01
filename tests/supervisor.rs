@@ -220,7 +220,7 @@ async fn supervisor_recovers_accepted_jobs_and_starts_each_durable_job_once() {
         worker_path,
     )
     .expect("supervisor");
-    let (shutdown, receiver) = watch::channel(false);
+    let (_shutdown, receiver) = watch::channel(false);
     let server = {
         let supervisor = supervisor.clone();
         tokio::spawn(async move { supervisor.serve_until(receiver).await })
@@ -302,7 +302,9 @@ async fn supervisor_recovers_accepted_jobs_and_starts_each_durable_job_once() {
         "one recovered job and one submitted job must each start once"
     );
 
-    shutdown.send(true).expect("stop");
+    longrun::supervisor::shutdown(&paths)
+        .await
+        .expect("shutdown");
     server.await.expect("server task").expect("server result");
     assert!(
         !paths.socket_path.exists(),

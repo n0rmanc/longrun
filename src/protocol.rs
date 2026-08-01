@@ -409,6 +409,7 @@ pub enum IpcMethod {
     Cancel,
     Gc,
     Health,
+    Shutdown,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
