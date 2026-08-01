@@ -67,7 +67,18 @@ jobs:
           Expand-Archive "dist/longrun-${{ matrix.target }}.zip" -DestinationPath verify
           & "verify/longrun.exe" --version
           New-Item -ItemType Directory -Force verify/bin | Out-Null
-          "@echo off`r`nif `"%1`"==`"--version`" echo codex-test`r`nif `"%1 %2`"==`"plugin list`" echo longrun@longrun-local`r`nexit /b 0" | Set-Content "verify/bin/codex.cmd"
+          @'
+          fn main() {
+              match std::env::args().skip(1).collect::<Vec<_>>().as_slice() {
+                  [version] if version == "--version" => println!("codex-test"),
+                  [plugin, command] if plugin == "plugin" && command == "list" => {
+                      println!("longrun@longrun-local");
+                  }
+                  _ => {}
+              }
+          }
+          '@ | Set-Content "verify/codex.rs"
+          rustc "verify/codex.rs" -o "verify/bin/codex.exe"
           $env:HOME = "$PWD/verify/home"
           $env:CODEX_HOME = "$PWD/verify/codex-home"
           $env:PATH = "$PWD/verify/bin;$env:PATH"
