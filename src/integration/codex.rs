@@ -694,7 +694,7 @@ fn hooks_check(paths: &AppPaths, executable: &Path) -> DoctorCheck {
         Err(error) => return check("hooks", false, true, error.to_string()),
     };
     match fs::read_to_string(path) {
-        Ok(hooks) if expected.iter().all(|command| hooks.contains(command)) => check(
+        Ok(hooks) if hooks_include(&hooks, &expected) => check(
             "hooks",
             true,
             true,
@@ -709,6 +709,12 @@ fn hooks_check(paths: &AppPaths, executable: &Path) -> DoctorCheck {
         ),
         Err(error) => check("hooks", false, true, error.to_string()),
     }
+}
+
+fn hooks_include(hooks: &str, expected: &[String]) -> bool {
+    expected
+        .iter()
+        .all(|command| serde_json::to_string(command).is_ok_and(|encoded| hooks.contains(&encoded)))
 }
 
 fn probe_codex(arguments: &[&str]) -> std::result::Result<String, String> {
@@ -729,4 +735,23 @@ fn probe_codex(arguments: &[&str]) -> std::result::Result<String, String> {
     } else {
         output
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::{hook_command, hooks_include, render_hooks};
+
+    #[test]
+    fn rendered_hooks_match_verbatim_windows_paths_after_json_escaping() {
+        let executable = r"\\?\C:\Longrun\longrun.exe";
+        let hooks = render_hooks(Path::new(executable)).expect("render hooks");
+        let expected = [
+            hook_command(executable, "session-start", true),
+            hook_command(executable, "pre-tool-use", true),
+            hook_command(executable, "post-tool-use", true),
+        ];
+        assert!(hooks_include(&hooks, &expected));
+    }
 }
