@@ -123,6 +123,7 @@ fn file_store_migrates_with_wal() {
 
     assert_eq!(store.schema_version().expect("schema version"), 4);
     assert_eq!(store.journal_mode().expect("journal mode"), "wal");
+    assert!(store.integrity_check().expect("integrity check"));
     fs::remove_dir_all(root).expect("remove test state");
 }
 

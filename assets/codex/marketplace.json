@@ -1,0 +1,20 @@
+{
+  "name": "longrun-local",
+  "interface": {
+    "displayName": "Longrun (local)"
+  },
+  "plugins": [
+    {
+      "name": "longrun",
+      "source": {
+        "source": "local",
+        "path": "./plugins/longrun"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

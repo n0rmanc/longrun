@@ -18,7 +18,7 @@ use crate::{
         pre_tool_use::{handle_pre_tool_use, now_ms},
         session_start::handle_session_start,
     },
-    integration::service as service_manager,
+    integration::{codex, service as service_manager},
     output::read_log_chunk,
     paths::AppPaths,
     protocol::{
@@ -296,6 +296,9 @@ pub async fn dispatch(
         Command::Logs(arguments) => logs(arguments, paths).await,
         Command::Cancel(arguments) => cancel(arguments, paths, config).await,
         Command::Gc(arguments) => gc(arguments, paths, config).await,
+        Command::Init(arguments) => init(arguments, paths),
+        Command::Uninstall(arguments) => uninstall(arguments, paths),
+        Command::Doctor(arguments) => doctor(arguments, paths, config).await,
         Command::Daemon(arguments) => daemon(arguments, paths, config, config_path).await,
         Command::Service(arguments) => service_command(arguments, paths, config_path).await,
         command => Err(Error::Unavailable(format!(
@@ -303,6 +306,59 @@ pub async fn dispatch(
             command.name()
         ))),
     }
+}
+
+fn init(arguments: InitArgs, paths: &AppPaths) -> Result<ExitCode> {
+    let report = codex::init(paths, &std::env::current_exe()?, arguments.repair)?;
+    if arguments.json {
+        serde_json::to_writer(std::io::stdout(), &report)?;
+        std::io::stdout().write_all(b"\n")?;
+    } else {
+        println!(
+            "Installed {} at {}. Review and trust the generated hooks in Codex with /hooks.",
+            report.plugin_selector,
+            report.generated_root.display()
+        );
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn uninstall(arguments: UninstallArgs, paths: &AppPaths) -> Result<ExitCode> {
+    let report = codex::uninstall(paths)?;
+    if arguments.purge_data {
+        match std::fs::remove_dir_all(&paths.data_dir) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    if arguments.json {
+        serde_json::to_writer(
+            std::io::stdout(),
+            &serde_json::json!({
+                "generated_root": report.generated_root,
+                "removed_files": report.removed_files,
+                "purged_data": arguments.purge_data,
+            }),
+        )?;
+        std::io::stdout().write_all(b"\n")?;
+    } else {
+        println!(
+            "Uninstalled Longrun Codex integration (removed {} generated files).",
+            report.removed_files
+        );
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+async fn doctor(arguments: JsonArgs, paths: &AppPaths, config: &Config) -> Result<ExitCode> {
+    let report = codex::doctor(paths, config).await;
+    codex::write_doctor(&report, arguments.json)?;
+    Ok(if report.healthy {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
+    })
 }
 
 async fn status(arguments: JobArgs, paths: &AppPaths) -> Result<ExitCode> {

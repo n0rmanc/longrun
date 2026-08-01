@@ -236,22 +236,22 @@ value.
 
 ### Tests for User Story 5
 
-- [ ] T077 [P] [US5] Add failing plugin, hook, skill, and marketplace rendering snapshot tests in `tests/integration_codex.rs`
-- [ ] T078 [P] [US5] Add failing idempotent init, moved-binary repair, and preservation-focused uninstall tests in `tests/integration_codex.rs`
-- [ ] T079 [P] [US5] Add failing doctor checks for Codex version, plugin commands, hooks, sandbox profile, store, and supervisor in `tests/integration_codex.rs`
+- [X] T077 [P] [US5] Add failing plugin, hook, skill, and marketplace rendering snapshot tests in `tests/integration_codex.rs`
+- [X] T078 [P] [US5] Add failing idempotent init, moved-binary repair, and preservation-focused uninstall tests in `tests/integration_codex.rs`
+- [X] T079 [P] [US5] Add failing doctor checks for Codex version, plugin commands, hooks, sandbox profile, store, and supervisor in `tests/integration_codex.rs`
 
 ### Implementation for User Story 5
 
-- [ ] T080 [P] [US5] Add the Longrun plugin manifest template in `assets/codex/plugin.json`
-- [ ] T081 [P] [US5] Add absolute-path SessionStart, PreToolUse, and PostToolUse hook templates in `assets/codex/hooks.json`
-- [ ] T082 [P] [US5] Add the agent workflow and no-polling rules in `assets/codex/skills/longrun/SKILL.md`
-- [ ] T083 [P] [US5] Add the local `longrun-local` marketplace template in `assets/codex/marketplace.json`
-- [ ] T084 [US5] Implement atomic template rendering, owned-file inventory, and manifest hashing in `src/integration/codex.rs`
-- [ ] T085 [US5] Implement idempotent `codex plugin marketplace add` and `codex plugin add longrun@longrun-local` orchestration in `src/integration/codex.rs`
-- [ ] T086 [US5] Implement repair and preservation-safe plugin/marketplace uninstall in `src/integration/codex.rs`
-- [ ] T087 [US5] Implement doctor diagnostics and human/JSON reports in `src/integration/codex.rs`
-- [ ] T088 [US5] Wire `init --codex`, `uninstall --codex`, and `doctor` commands in `src/cli.rs`
-- [ ] T089 [US5] Run timed isolated-Codex-home install/doctor/repair/uninstall live tests proving SC-009, review the diff, and record evidence in `specs/001-long-command-execution/implementation-log.md`
+- [X] T080 [P] [US5] Add the Longrun plugin manifest template in `assets/codex/plugin.json`
+- [X] T081 [P] [US5] Add absolute-path SessionStart, PreToolUse, and PostToolUse hook templates in `assets/codex/hooks.json`
+- [X] T082 [P] [US5] Add the agent workflow and no-polling rules in `assets/codex/skills/longrun/SKILL.md`
+- [X] T083 [P] [US5] Add the local `longrun-local` marketplace template in `assets/codex/marketplace.json`
+- [X] T084 [US5] Implement atomic template rendering, owned-file inventory, and manifest hashing in `src/integration/codex.rs`
+- [X] T085 [US5] Implement idempotent `codex plugin marketplace add` and `codex plugin add longrun@longrun-local` orchestration in `src/integration/codex.rs`
+- [X] T086 [US5] Implement repair and preservation-safe plugin/marketplace uninstall in `src/integration/codex.rs`
+- [X] T087 [US5] Implement doctor diagnostics and human/JSON reports in `src/integration/codex.rs`
+- [X] T088 [US5] Wire `init --codex`, `uninstall --codex`, and `doctor` commands in `src/cli.rs`
+- [X] T089 [US5] Run timed isolated-Codex-home install/doctor/repair/uninstall live tests proving SC-009, review the diff, and record evidence in `specs/001-long-command-execution/implementation-log.md`
 - [ ] T090 [P] [US5] Add failing platform selection, archive layout, and checksum verification tests in `tests/install.rs`
 - [ ] T091 [P] [US5] Add failing Cargo package metadata and release-artifact manifest checks in `tests/install.rs`
 - [ ] T092 [US5] Implement checksummed GitHub Release binary installation for macOS and Linux in `install.sh`

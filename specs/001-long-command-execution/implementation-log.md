@@ -495,3 +495,32 @@ commits required by the constitution.
   the independent worker's execution claim. A replacement supervisor adopts
   fresh heartbeating work or reads the already-persisted terminal result; it
   never replays the requested command.
+
+## Codex Integration Lifecycle
+
+- 2026-08-01: added the generated `longrun` Codex plugin, absolute-path
+  SessionStart/PreToolUse/PostToolUse hooks, the Longrun no-polling skill, and
+  the `longrun-local` marketplace under the Codex-required
+  `.agents/plugins/marketplace.json` layout.
+- `longrun init --codex` atomically renders only Longrun-owned assets, records
+  a manifest hash and owned-file inventory, then uses `codex plugin marketplace
+  add` and `codex plugin add longrun@longrun-local`. `--repair` rewrites hooks
+  from the current resolved executable path. `uninstall --codex` removes Codex
+  entries and generated files only when that ownership inventory identifies
+  them as Longrun-owned; untracked files and configuration are untouched.
+- `longrun doctor` now emits human or JSON checks for executable, private
+  state-directory permissions, SQLite WAL and integrity, Codex version/plugin
+  commands/plugin activation, rendered hooks, sandbox profile, platform
+  process control, optional supervisor status, and user-managed hook trust.
+- Focused checks: `cargo test --locked --test integration_codex` (3 passing)
+  snapshots rendered assets, repeats install, repairs after moving the binary,
+  verifies ownership-safe uninstall, and checks the JSON doctor report.
+- Live check: with isolated `HOME`, `CODEX_HOME`, and XDG directories, the
+  real Codex CLI accepted `init` twice, installed
+  `longrun@longrun-local`, repaired hooks after the Longrun executable moved,
+  returned a healthy doctor report, then uninstalled the plugin and
+  marketplace while preserving a sentinel file.
+- Review: Codex integration spawns only documented `codex plugin` and
+  diagnostic commands through direct arguments. It has no requested-command
+  spawn path, does not edit Codex configuration directly, does not install a
+  durable service, and does not expose full job output or credentials.

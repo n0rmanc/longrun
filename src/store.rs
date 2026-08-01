@@ -184,6 +184,13 @@ impl Store {
             .query_row("PRAGMA journal_mode", [], |row| row.get(0))?)
     }
 
+    pub fn integrity_check(&self) -> Result<bool> {
+        Ok(self
+            .connection
+            .query_row("PRAGMA integrity_check", [], |row| row.get::<_, String>(0))?
+            == "ok")
+    }
+
     pub fn create_job(&mut self, specification: &JobSpecification) -> Result<()> {
         self.create_job_for_session(specification, None)
     }
