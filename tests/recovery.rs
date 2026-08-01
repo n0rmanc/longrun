@@ -218,6 +218,69 @@ fn resume_retries_respect_the_budget_and_never_hold_two_delivery_leases() {
 }
 
 #[test]
+fn started_resume_stays_fenced_until_its_process_reports_an_outcome() {
+    let mut store = Store::open_in_memory().expect("store");
+    let job = specification();
+    store
+        .create_job_for_session(&job, Some("session"))
+        .expect("job");
+    complete(&mut store, &job);
+
+    let first = store
+        .claim_delivery(
+            job.job_id,
+            "session",
+            DeliveryState::ResumeLeased,
+            "resume-a",
+            100,
+            10,
+            2,
+        )
+        .expect("lease");
+    store
+        .start_resume(job.job_id, first.lease_id, 101)
+        .expect("start");
+    assert_eq!(
+        store.status(job.job_id).expect("status").delivery_state,
+        DeliveryState::ResumeStarted
+    );
+    assert_eq!(store.expire_delivery_leases(10_000).expect("expire"), 0);
+    assert!(
+        store
+            .claim_delivery(
+                job.job_id,
+                "session",
+                DeliveryState::ResumeLeased,
+                "resume-b",
+                10_000,
+                10,
+                2,
+            )
+            .is_err()
+    );
+    store
+        .finish_delivery(
+            job.job_id,
+            first.lease_id,
+            DeliveryState::Undelivered,
+            10_001,
+        )
+        .expect("failed process");
+    let retry = store
+        .claim_delivery(
+            job.job_id,
+            "session",
+            DeliveryState::ResumeLeased,
+            "resume-b",
+            10_001,
+            10,
+            2,
+        )
+        .expect("retry");
+    assert_eq!(first.idempotency_key, retry.idempotency_key);
+}
+
+#[test]
 fn session_start_returns_one_bounded_recovery_envelope_then_marks_it_delivered() {
     let root = std::env::temp_dir().join(format!("longrun-session-start-{}", Uuid::now_v7()));
     let paths = paths(&root);
@@ -451,6 +514,98 @@ async fn supervisor_records_a_stale_worker_persistence_gap_without_reexecution()
 }
 
 #[cfg(unix)]
+#[tokio::test]
+async fn supervisor_auto_resume_is_disabled_by_default_and_delivers_once_when_enabled() {
+    use std::{os::unix::fs::PermissionsExt, path::PathBuf};
+
+    let root = std::env::temp_dir().join(format!("longrun-auto-resume-{}", Uuid::now_v7()));
+    let mut paths = paths(&root);
+    paths.socket_path = std::env::temp_dir().join(format!("lr-{}.sock", Uuid::now_v7()));
+    paths.ensure_private_state().expect("state");
+    let bin = root.join("bin");
+    let resumes = root.join("resumes.log");
+    fs::create_dir_all(&bin).expect("bin");
+    let codex = bin.join("codex");
+    fs::write(
+        &codex,
+        format!(
+            "#!/bin/sh\nprintf '__longrun_resume__ %s\\n' \"$*\" >> '{}'\n",
+            resumes.display().to_string().replace('\'', "'\"'\"'")
+        ),
+    )
+    .expect("codex");
+    fs::set_permissions(&codex, fs::Permissions::from_mode(0o755)).expect("mode");
+
+    let database = paths.state_dir.join("longrun.sqlite");
+    let job = specification();
+    let mut store = Store::open(&database).expect("store");
+    store
+        .create_job_for_session(&job, Some("recover-session"))
+        .expect("job");
+    complete(&mut store, &job);
+    drop(store);
+
+    let mut disabled = Config::default();
+    let config_path = paths.config_dir.join("config.toml");
+    fs::write(&config_path, toml::to_string(&disabled).expect("config")).expect("config");
+    let worker_path: std::ffi::OsString =
+        format!("{}:{}", bin.display(), std::env::var("PATH").expect("PATH")).into();
+    let supervisor = Supervisor::new(
+        paths.clone(),
+        &disabled,
+        PathBuf::from(env!("CARGO_BIN_EXE_longrun")),
+        config_path.clone(),
+        worker_path.clone(),
+    )
+    .expect("disabled supervisor");
+    let (shutdown, receiver) = watch::channel(false);
+    let server = tokio::spawn(async move { supervisor.serve_until(receiver).await });
+    wait_for_socket(&paths.socket_path).await;
+    sleep(Duration::from_millis(75)).await;
+    assert!(
+        !resumes.exists(),
+        "default recovery must not start codex exec resume"
+    );
+    assert_eq!(
+        Store::open(&database)
+            .expect("store")
+            .status(job.job_id)
+            .expect("status")
+            .delivery_state,
+        DeliveryState::Undelivered
+    );
+    shutdown.send(true).expect("shutdown");
+    server.await.expect("server task").expect("server result");
+
+    disabled.recovery.auto_resume = true;
+    fs::write(&config_path, toml::to_string(&disabled).expect("config")).expect("config");
+    let supervisor = Supervisor::new(
+        paths.clone(),
+        &disabled,
+        PathBuf::from(env!("CARGO_BIN_EXE_longrun")),
+        config_path,
+        worker_path,
+    )
+    .expect("enabled supervisor");
+    let (shutdown, receiver) = watch::channel(false);
+    let server = tokio::spawn(async move { supervisor.serve_until(receiver).await });
+    wait_for_socket(&paths.socket_path).await;
+    wait_for_delivery(&paths, job.job_id, DeliveryState::DeliveredByResume).await;
+    let invocation_log = fs::read_to_string(&resumes).expect("resume invocation");
+    assert_eq!(invocation_log.matches("__longrun_resume__").count(), 1);
+    assert!(
+        invocation_log.starts_with(
+            "__longrun_resume__ exec resume recover-session Longrun recovery delivery (idempotency key: "
+        )
+    );
+    assert!(invocation_log.contains("Job ID:"));
+    shutdown.send(true).expect("shutdown");
+    server.await.expect("server task").expect("server result");
+    let _ = fs::remove_file(&paths.socket_path);
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[cfg(unix)]
 async fn wait_for_socket(socket: &Path) {
     for _ in 0..100 {
         if socket.exists() {
@@ -459,6 +614,23 @@ async fn wait_for_socket(socket: &Path) {
         sleep(Duration::from_millis(10)).await;
     }
     panic!("supervisor socket was not created");
+}
+
+#[cfg(unix)]
+async fn wait_for_delivery(paths: &AppPaths, job_id: Uuid, state: DeliveryState) {
+    for _ in 0..300 {
+        if Store::open(paths.state_dir.join("longrun.sqlite"))
+            .expect("store")
+            .status(job_id)
+            .expect("status")
+            .delivery_state
+            == state
+        {
+            return;
+        }
+        sleep(Duration::from_millis(10)).await;
+    }
+    panic!("job {job_id} did not reach delivery {}", state.as_str());
 }
 
 #[cfg(unix)]

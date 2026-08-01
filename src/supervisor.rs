@@ -20,18 +20,20 @@ use tokio::{
 use crate::{
     config::Config,
     error::{Error, Result},
+    hook::output::bounded_result_context,
     ipc::{read_frame, validate_protocol_version, write_frame},
     output::read_log_chunk,
     paths::AppPaths,
     protocol::{
-        ExecutionMode, ExecutionState, IpcError, IpcEvent, IpcEventKind, IpcMethod, IpcRequest,
-        IpcResponse, JobResult, JobSpecification, NativeString, PROTOCOL_VERSION,
+        DeliveryState, ExecutionMode, ExecutionState, IpcError, IpcEvent, IpcEventKind, IpcMethod,
+        IpcRequest, IpcResponse, JobResult, JobSpecification, NativeString, PROTOCOL_VERSION,
     },
     store::Store,
 };
 
 const WORKER_HEARTBEAT_STALE_MS: i64 = 5_000;
 const MAX_LOG_CHUNK_BYTES: usize = 64 * 1024;
+const RESUME_LEASE_MS: i64 = 5 * 60 * 1_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LogChunk {
@@ -54,6 +56,9 @@ pub struct Supervisor {
     termination_grace_ms: u64,
     max_age_days: u32,
     max_log_bytes: u64,
+    auto_resume: bool,
+    retry_budget: u32,
+    model_max_bytes: usize,
 }
 
 impl Supervisor {
@@ -81,6 +86,9 @@ impl Supervisor {
             termination_grace_ms: config.execution.termination_grace_ms,
             max_age_days: config.retention.max_age_days,
             max_log_bytes: config.retention.max_log_bytes,
+            auto_resume: config.recovery.auto_resume,
+            retry_budget: config.recovery.retry_budget,
+            model_max_bytes: config.output.model_max_bytes,
         })
     }
 
@@ -103,6 +111,7 @@ impl Supervisor {
     pub async fn serve_until(&self, shutdown: watch::Receiver<bool>) -> Result<()> {
         self.reconcile_incomplete_workers()?;
         self.resume_accepted_jobs()?;
+        self.resume_undelivered_results()?;
         #[cfg(unix)]
         let result = { self.serve_unix(shutdown).await };
         #[cfg(windows)]
@@ -156,6 +165,82 @@ impl Supervisor {
                     .is_ok_and(|state| !state.is_terminal())
             });
         Ok(())
+    }
+
+    fn resume_undelivered_results(&self) -> Result<()> {
+        if !self.auto_resume || self.stopping.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        let database = self.paths.state_dir.join("longrun.sqlite");
+        let now = now_ms()?;
+        let mut store = Store::open(&database)?;
+        store.expire_delivery_leases(now)?;
+        let mut resumes = Vec::new();
+        for (session_id, result) in store.undelivered_results_for_sessions()? {
+            match store.claim_delivery(
+                result.job_id,
+                &session_id,
+                DeliveryState::ResumeLeased,
+                "supervisor-resume",
+                now,
+                RESUME_LEASE_MS,
+                self.retry_budget,
+            ) {
+                Ok(lease) => resumes.push((lease, result)),
+                Err(Error::Denied(_)) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        drop(store);
+        for (lease, result) in resumes {
+            self.spawn_resume(lease, result);
+        }
+        Ok(())
+    }
+
+    fn spawn_resume(&self, lease: crate::store::DeliveryLease, result: JobResult) {
+        let database = self.paths.state_dir.join("longrun.sqlite");
+        let worker_path = self.worker_path.clone();
+        let model_max_bytes = self.model_max_bytes;
+        tokio::spawn(async move {
+            let Ok(now) = now_ms() else {
+                return;
+            };
+            if Store::open(&database)
+                .and_then(|mut store| store.start_resume(lease.job_id, lease.lease_id, now))
+                .is_err()
+            {
+                return;
+            }
+            let prompt = format!(
+                "Longrun recovery delivery (idempotency key: {}):\n\n{}",
+                lease.idempotency_key,
+                bounded_result_context(&result, model_max_bytes),
+            );
+            let mut command = Command::new("codex");
+            command
+                .arg("exec")
+                .arg("resume")
+                .arg(&lease.session_id)
+                .arg(prompt)
+                .env("PATH", worker_path)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            let state = match command.spawn() {
+                Ok(mut child) => match child.wait().await {
+                    Ok(status) if status.success() => DeliveryState::DeliveredByResume,
+                    Ok(_) | Err(_) => DeliveryState::Undelivered,
+                },
+                Err(_) => DeliveryState::Undelivered,
+            };
+            let Ok(now) = now_ms() else {
+                return;
+            };
+            let _ = Store::open(&database).and_then(|mut store| {
+                store.finish_delivery(lease.job_id, lease.lease_id, state, now)
+            });
+        });
     }
 
     fn spawn_worker(&self, job_id: uuid::Uuid) {
@@ -307,6 +392,7 @@ impl Supervisor {
                 }
                 _ = recovery.tick() => {
                     self.reconcile_incomplete_workers()?;
+                    self.resume_undelivered_results()?;
                 }
             }
         };
@@ -342,6 +428,7 @@ impl Supervisor {
                 }
                 _ = recovery.tick() => {
                     self.reconcile_incomplete_workers()?;
+                    self.resume_undelivered_results()?;
                 }
             }
         }

@@ -438,3 +438,24 @@ commits required by the constitution.
   the supervisor and its worker continue independently. Recovery happens only
   after the test explicitly expires the old lease, preserving the required
   no-race delivery ordering.
+
+## Guarded Optional Codex Resume
+
+- 2026-07-31: added optional `codex exec resume SESSION_ID PROMPT` recovery to
+  the supervisor. It remains disabled by the default
+  `recovery.auto_resume = false`; when enabled, the supervisor first expires
+  old leases, then atomically claims an undelivered session result with the
+  configured retry budget and session lock.
+- Before spawning Codex, the delivery is persisted as `resume_started`. This
+  prevents a supervisor crash after process creation from authorizing a second
+  resume. A normal non-zero exit or spawn failure returns the lease to
+  `undelivered`; a successful exit records `delivered_by_resume`. The prompt
+  carries the existing stable idempotency key and bounded untrusted result
+  context through direct arguments, never a shell.
+- Focused checks: recovery tests prove disabled mode starts no `codex` process,
+  enabled mode starts exactly one `exec resume` with the expected session and
+  result identity, and a started resume stays fenced even after its original
+  lease expiry until the process outcome is persisted.
+- Review: the optional Codex process is delivery-only. It reads a persisted
+  terminal result and cannot submit, retry, or spawn the requested command;
+  worker execution claims remain the at-most-once boundary.

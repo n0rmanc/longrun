@@ -626,6 +626,25 @@ impl Store {
             .transpose()
     }
 
+    pub fn undelivered_results_for_sessions(&self) -> Result<Vec<(String, JobResult)>> {
+        let mut statement = self.connection.prepare(
+            "SELECT deliveries.session_id, results.result_json
+             FROM deliveries
+             JOIN results USING (job_id)
+             WHERE deliveries.session_id IS NOT NULL AND deliveries.state = 'undelivered'
+             ORDER BY results.created_at_ms ASC",
+        )?;
+        statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .map(|row| {
+                let (session_id, result) = row?;
+                Ok((session_id, serde_json::from_str(&result)?))
+            })
+            .collect()
+    }
+
     pub fn status(&self, job_id: Uuid) -> Result<JobStatus> {
         let (execution, delivery): (String, String) = self.connection.query_row(
             "SELECT executions.state, deliveries.state
@@ -979,6 +998,10 @@ impl Store {
                         DeliveryState::SessionStartLeased,
                         DeliveryState::DeliveredOnStart
                     )
+                    | (
+                        DeliveryState::ResumeStarted,
+                        DeliveryState::DeliveredByResume | DeliveryState::Undelivered
+                    )
             )
         {
             return Err(Error::Denied(
@@ -1000,6 +1023,24 @@ impl Store {
                 "DELETE FROM session_locks WHERE session_id = ?1 AND owner = ?2",
                 params![session_id, lease_id.to_string()],
             )?;
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn start_resume(&mut self, job_id: Uuid, lease_id: Uuid, now_ms: i64) -> Result<()> {
+        let transaction = self.connection.transaction()?;
+        expire_delivery_leases(&transaction, now_ms)?;
+        let changed = transaction.execute(
+            "UPDATE deliveries
+             SET state = 'resume_started'
+             WHERE job_id = ?1 AND state = 'resume_leased' AND lease_id = ?2",
+            params![job_id.to_string(), lease_id.to_string()],
+        )?;
+        if changed != 1 {
+            return Err(Error::Denied(
+                "delivery lease cannot start automatic resume".into(),
+            ));
         }
         transaction.commit()?;
         Ok(())
