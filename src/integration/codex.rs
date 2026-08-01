@@ -687,9 +687,9 @@ fn hooks_check(paths: &AppPaths, executable: &Path) -> DoctorCheck {
     let path = paths.integration_dir.join("plugins/longrun/hooks.json");
     let expected = match utf8_path(executable) {
         Ok(executable) => [
-            hook_command(executable, "session-start", false),
-            hook_command(executable, "pre-tool-use", false),
-            hook_command(executable, "post-tool-use", false),
+            hook_command(executable, "session-start", cfg!(windows)),
+            hook_command(executable, "pre-tool-use", cfg!(windows)),
+            hook_command(executable, "post-tool-use", cfg!(windows)),
         ],
         Err(error) => return check("hooks", false, true, error.to_string()),
     };
