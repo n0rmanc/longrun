@@ -744,3 +744,25 @@ commits required by the constitution.
 - Final remote confirmation: GitHub Actions CI run `30678844053` for commit
   `47f7ff2` passed on Ubuntu (1m28s), macOS (1m08s), and Windows (2m49s).
   Windows ran formatting, the full native test suite, and Clippy successfully.
+
+## Release Distribution Acceptance
+
+- 2026-08-01: published GitHub Release `v0.1.0` from tag commit `da88937`.
+  Release workflow `30680625509` passed its macOS ARM64, macOS Intel, Linux
+  x86_64, Windows x86_64, and publishing jobs.
+- Downloaded all eight release assets and verified each detached checksum:
+  `2b8b8eaca2493f31fd18248961bc0751c7ce19a9a54f55e4b0a39d51aee749f8`
+  (macOS ARM64), `988627c409e06d23a971def614acd8c504c5dfb9bd9d515400afaeb818f8a805`
+  (macOS Intel), `247e37db51f000dc158b94a1aaac662457f67b97c6fb9ce6fcac689c99f908f1`
+  (Linux x86_64), and
+  `670fd52df7e897b95981e548fecd5a2d9d8d8a461a4b93f0e74e8dadc2481a9e`
+  (Windows x86_64). Every Unix archive contains `longrun`; the Windows
+  archive contains `longrun.exe`.
+- Live installer check passed against the advertised `main/install.sh`:
+  downloading and verifying the macOS ARM64 release archive installed a
+  temporary binary that reported `longrun 0.1.0`.
+- Added `Formula/longrun.rb` with the three supported Homebrew target
+  archives and their published SHA-256 values. `brew style`, `brew audit
+  --strict --new --online`, a temporary local tap install, `brew test`, and
+  `longrun --version` all passed. The temporary formula, tap, and core tap
+  used for that check were removed afterward.
