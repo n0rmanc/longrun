@@ -32,7 +32,7 @@ fn hook_receipt_precedes_the_unchanged_direct_program_arguments() {
         "longrun",
         "submit",
         "--hook-token",
-        "token",
+        "--token-with-leading-hyphens",
         "--hook-receipt",
         "LONGRUN_RECEIPT_HANDLE_V1 token",
         "--",
@@ -45,7 +45,10 @@ fn hook_receipt_precedes_the_unchanged_direct_program_arguments() {
     let Command::Submit(arguments) = cli.command else {
         panic!("expected submit command");
     };
-    assert_eq!(arguments.hook_token.as_deref(), Some("token"));
+    assert_eq!(
+        arguments.hook_token.as_deref(),
+        Some("--token-with-leading-hyphens")
+    );
     assert_eq!(
         arguments.hook_receipt.as_deref(),
         Some("LONGRUN_RECEIPT_HANDLE_V1 token")

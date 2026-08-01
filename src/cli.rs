@@ -112,7 +112,7 @@ pub struct ExecutionArgs {
 pub struct SubmitArgs {
     #[command(flatten)]
     pub execution: ExecutionArgs,
-    #[arg(long, hide = true, value_name = "TOKEN")]
+    #[arg(long, hide = true, value_name = "TOKEN", allow_hyphen_values = true)]
     pub hook_token: Option<String>,
     #[arg(long, hide = true, value_name = "RECEIPT")]
     pub hook_receipt: Option<String>,
