@@ -19,6 +19,12 @@ The installer selects the supported native archive, downloads its adjacent
 SHA-256 file, verifies it, and installs `longrun` to `~/.local/bin` by
 default. Add that directory to `PATH` if necessary.
 
+Or install the same published archive through Homebrew:
+
+```sh
+brew install --formula https://raw.githubusercontent.com/n0rmanc/longrun/main/Formula/longrun.rb
+```
+
 Developers can install from source:
 
 ```sh
