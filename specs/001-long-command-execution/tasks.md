@@ -252,9 +252,9 @@ value.
 - [X] T087 [US5] Implement doctor diagnostics and human/JSON reports in `src/integration/codex.rs`
 - [X] T088 [US5] Wire `init --codex`, `uninstall --codex`, and `doctor` commands in `src/cli.rs`
 - [X] T089 [US5] Run timed isolated-Codex-home install/doctor/repair/uninstall live tests proving SC-009, review the diff, and record evidence in `specs/001-long-command-execution/implementation-log.md`
-- [ ] T090 [P] [US5] Add failing platform selection, archive layout, and checksum verification tests in `tests/install.rs`
+- [X] T090 [P] [US5] Add failing platform selection, archive layout, and checksum verification tests in `tests/install.rs`
 - [ ] T091 [P] [US5] Add failing Cargo package metadata and release-artifact manifest checks in `tests/install.rs`
-- [ ] T092 [US5] Implement checksummed GitHub Release binary installation for macOS and Linux in `install.sh`
+- [X] T092 [US5] Implement checksummed GitHub Release binary installation for macOS and Linux in `install.sh`
 - [ ] T093 [US5] Add the Homebrew formula using published release checksums in `Formula/longrun.rb`
 - [ ] T094 [US5] Add Cargo publishing metadata plus macOS/Linux/Windows archive, checksum, clean-install, and `longrun doctor` automation in `Cargo.toml` and `.github/workflows/release.yml`
 

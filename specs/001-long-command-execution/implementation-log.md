@@ -524,3 +524,19 @@ commits required by the constitution.
   diagnostic commands through direct arguments. It has no requested-command
   spawn path, does not edit Codex configuration directly, does not install a
   durable service, and does not expose full job output or credentials.
+
+## Checksummed Binary Installer
+
+- 2026-08-01: added a POSIX `install.sh` that maps supported macOS and Linux
+  CPU/OS pairs to a release archive, downloads its detached SHA-256 checksum,
+  verifies it with `sha256sum` or `shasum`, requires the expected `longrun`
+  archive layout, and installs only the executable.
+- Focused checks: `cargo test --locked --test install` (3 passing) covers
+  Linux target selection, valid checksum installation, checksum mismatch
+  rejection, and rejection of an archive lacking the expected binary.
+- Live check: created a disposable macOS-target archive from the actual
+  `target/debug/longrun`, verified it through the installer using a local
+  file URL, and ran the installed binary's `--version` successfully.
+- Review: the installer rejects unsupported platforms, missing checksum tools,
+  checksum mismatches, and malformed archives before modifying the destination.
+  It uses no shell evaluation of downloaded metadata and installs no service.
