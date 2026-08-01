@@ -88,6 +88,12 @@ Longrun's `PreToolUse` hook validates that exact form and rewrites it to the
 installed absolute Longrun binary before issuing a receipt. Other wrappers are
 not supported.
 
+To invoke the skill explicitly in Codex, use:
+
+```text
+$longrun:longrun
+```
+
 Repair after moving or replacing the binary:
 
 ```sh
