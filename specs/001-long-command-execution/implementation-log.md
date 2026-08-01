@@ -540,3 +540,24 @@ commits required by the constitution.
 - Review: the installer rejects unsupported platforms, missing checksum tools,
   checksum mismatches, and malformed archives before modifying the destination.
   It uses no shell evaluation of downloaded metadata and installs no service.
+
+## Release Automation and Cargo Publishing Metadata
+
+- 2026-08-01: added Cargo package homepage, docs, README, keywords, categories,
+  and a minimal published-file manifest. The release workflow builds native
+  macOS Intel/Apple Silicon, Linux x86_64, and Windows x86_64 artifacts;
+  emits each archive with a SHA-256 file; checks a clean extracted binary; and
+  runs `init --codex` plus `doctor` with a disposable Codex CLI fixture before
+  uploading and publishing release assets.
+- Focused checks: `cargo test --locked --test install` (4 passing) verifies the
+  package metadata and release workflow cover the declared supported targets,
+  checksum generation, release permission, publication, and clean doctor
+  check. `cargo package --allow-dirty --no-verify` also packaged the source
+  manifest successfully.
+- Live check: built the optimized Longrun binary, archived and checksummed it,
+  extracted it into a clean temporary directory, then ran its `--version`,
+  `init --codex`, and `doctor` routes with a disposable Codex fixture.
+- Review: build jobs have read-only repository access. Only the release job has
+  `contents: write`, and it publishes only the artifacts produced by the build
+  matrix. Release creation remains tag-triggered; no release was published
+  during implementation.

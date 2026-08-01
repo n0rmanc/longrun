@@ -140,3 +140,42 @@ fn installer_refuses_an_archive_without_the_longrun_binary() {
     assert!(!root.join("bin/longrun").exists());
     fs::remove_dir_all(root).expect("cleanup");
 }
+
+#[test]
+fn package_metadata_and_release_workflow_publish_verifiable_supported_artifacts() {
+    let manifest: toml::Value =
+        toml::from_str(&fs::read_to_string("Cargo.toml").expect("Cargo manifest")).expect("TOML");
+    let package = manifest["package"].as_table().expect("package metadata");
+    for field in [
+        "homepage",
+        "documentation",
+        "readme",
+        "keywords",
+        "categories",
+    ] {
+        assert!(package.contains_key(field), "missing package.{field}");
+    }
+
+    let workflow = fs::read_to_string(".github/workflows/release.yml").expect("release workflow");
+    for target in [
+        "x86_64-apple-darwin",
+        "aarch64-apple-darwin",
+        "x86_64-unknown-linux-gnu",
+        "x86_64-pc-windows-msvc",
+    ] {
+        assert!(workflow.contains(target), "missing release target {target}");
+    }
+    for required in [
+        "permissions:",
+        "contents: write",
+        "sha256sum",
+        "shasum -a 256",
+        "gh release create",
+        "longrun doctor",
+    ] {
+        assert!(
+            workflow.contains(required),
+            "missing release workflow {required}"
+        );
+    }
+}

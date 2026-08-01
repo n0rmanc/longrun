@@ -1,0 +1,95 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-13
+            target: x86_64-apple-darwin
+            archive: tar.gz
+          - os: macos-14
+            target: aarch64-apple-darwin
+            archive: tar.gz
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+    steps:
+      - uses: actions/checkout@v5
+      - run: rustup toolchain install stable --profile minimal
+      - run: rustup target add ${{ matrix.target }}
+      - name: Build and verify Unix archive
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +stable build --release --locked --target "${{ matrix.target }}"
+          mkdir dist clean
+          cp "target/${{ matrix.target }}/release/longrun" clean/longrun
+          tar -C clean -czf "dist/longrun-${{ matrix.target }}.tar.gz" longrun
+          if command -v sha256sum >/dev/null; then
+            sha256sum "dist/longrun-${{ matrix.target }}.tar.gz" > "dist/longrun-${{ matrix.target }}.tar.gz.sha256"
+          else
+            shasum -a 256 "dist/longrun-${{ matrix.target }}.tar.gz" > "dist/longrun-${{ matrix.target }}.tar.gz.sha256"
+          fi
+          mkdir -p clean/extract clean/bin
+          tar -xzf "dist/longrun-${{ matrix.target }}.tar.gz" -C clean/extract
+          test -x clean/extract/longrun
+          clean/extract/longrun --version
+          cp clean/extract/longrun clean/bin/longrun
+          printf '#!/bin/sh\nif [ "$1" = "--version" ]; then echo codex-test; fi\nif [ "$1 $2" = "plugin list" ]; then echo longrun@longrun-local; fi\nexit 0\n' > clean/bin/codex
+          chmod +x clean/bin/codex
+          HOME="$PWD/clean/home" CODEX_HOME="$PWD/clean/codex-home" PATH="$PWD/clean/bin:$PATH" clean/bin/longrun init --codex --json
+          HOME="$PWD/clean/home" CODEX_HOME="$PWD/clean/codex-home" PATH="$PWD/clean/bin:$PATH" clean/bin/longrun doctor --json
+      - name: Build and verify Windows archive
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cargo +stable build --release --locked --target "${{ matrix.target }}"
+          New-Item -ItemType Directory -Force dist, clean | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/longrun.exe" "clean/longrun.exe"
+          Compress-Archive -Path "clean/longrun.exe" -DestinationPath "dist/longrun-${{ matrix.target }}.zip"
+          $hash = (Get-FileHash "dist/longrun-${{ matrix.target }}.zip" -Algorithm SHA256).Hash.ToLower()
+          "$hash  longrun-${{ matrix.target }}.zip" | Set-Content "dist/longrun-${{ matrix.target }}.zip.sha256" -NoNewline
+          Expand-Archive "dist/longrun-${{ matrix.target }}.zip" -DestinationPath verify
+          & "verify/longrun.exe" --version
+          New-Item -ItemType Directory -Force verify/bin | Out-Null
+          "@echo off`r`nif `"%1`"==`"--version`" echo codex-test`r`nif `"%1 %2`"==`"plugin list`" echo longrun@longrun-local`r`nexit /b 0" | Set-Content "verify/bin/codex.cmd"
+          $env:HOME = "$PWD/verify/home"
+          $env:CODEX_HOME = "$PWD/verify/codex-home"
+          $env:PATH = "$PWD/verify/bin;$env:PATH"
+          & "verify/longrun.exe" init --codex --json
+          & "verify/longrun.exe" doctor --json
+      - uses: actions/upload-artifact@v5
+        with:
+          name: longrun-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish release archives and checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" --generate-notes dist/*
