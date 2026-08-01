@@ -51,7 +51,8 @@ Hook-owned record created before the short submit command runs.
 | cwd | native path | Must match hook input |
 | binary_path | native path | Must match installed executable |
 | command_hash | digest | Covers exact submit request |
-| hook_token_hash | digest | Hash of one-time token injected by PreToolUse |
+| hook_token_hash | digest | Hash of opaque hook-owned token retained in the rewritten wrapper |
+| signed_receipt | string | HMAC-signed receipt retained only in trusted pending state |
 | created_at | timestamp | UTC |
 | expires_at | timestamp | Short bounded lifetime |
 | state | pending, claimed, consumed, rejected | Monotonic |

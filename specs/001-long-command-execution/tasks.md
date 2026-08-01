@@ -273,7 +273,7 @@ user state.
 - [X] T098 [P] Add user installation, configuration, security, recovery, and command documentation in `README.md`
 - [X] T099 Add performance tests for submit p95, hook no-op p95, status p95, completion latency, and model byte bounds in `tests/performance.rs`
 - [X] T100 Add a 100-iteration execution/replay/delivery stress test covering SC-002 and SC-006 in `tests/recovery.rs`
-- [ ] T101 Run every quickstart scenario and record exact commands and outcomes in `specs/001-long-command-execution/implementation-log.md`
+- [X] T101 Run every quickstart scenario and record exact commands and outcomes in `specs/001-long-command-execution/implementation-log.md`
 - [X] T102 Run `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --locked`, and platform compile checks; record results in `specs/001-long-command-execution/implementation-log.md`
 - [X] T103 Review all source and generated integration assets for constitution compliance, unnecessary dependencies, duplicate execution paths, and secret exposure in `specs/001-long-command-execution/implementation-log.md`
 
@@ -433,3 +433,7 @@ This table is the authoritative task mapping used by cross-artifact analysis.
 | SC-012 | T078, T086, T089 |
 | SC-013 | T090-T094 |
 | Constitution quality gates | T005-T007, T019, T033, T040, T051, T060, T076, T089, T101-T103 |
+
+## Phase 10: Convergence
+
+- [X] T104 Re-run the trusted native Codex 90-second acceptance against the opaque receipt-handle path and record JSONL and SQLite proof in `specs/001-long-command-execution/implementation-log.md` per SC-001 and SC-003 (partial)

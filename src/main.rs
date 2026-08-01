@@ -18,12 +18,16 @@ fn init_tracing(filter: &str) {
 async fn run() -> longrun::error::Result<ExitCode> {
     let cli = Cli::parse();
     let paths = AppPaths::discover()?;
-    paths.ensure_private_state()?;
     let config_path = cli
         .config
         .clone()
         .unwrap_or_else(|| paths.config_dir.join("config.toml"));
-    let config = Config::load(&config_path)?;
+    let config = if cli.is_hook_receipt_submit() {
+        Config::default()
+    } else {
+        paths.ensure_private_state()?;
+        Config::load(&config_path)?
+    };
     init_tracing(&config.diagnostics.log_level);
     cli::dispatch(cli, &paths, &config, &config_path).await
 }

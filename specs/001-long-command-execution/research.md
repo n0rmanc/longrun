@@ -30,11 +30,14 @@ replacing the original result.
 ## Decision 2: Keep submit non-executing and bind it to hook context
 
 **Decision**: `PreToolUse` records the exact tool context and command hash,
-creates a one-time hook token, and rewrites only the verified non-executing
-Longrun wrapper call to include that token. `longrun submit` claims the token
-and creates a versioned signed receipt containing the hook context.
-`PostToolUse` verifies the signature and cross-checks all receipt fields against
-the pending record before atomically consuming it and starting the command.
+creates the claimed pending submission, signs the versioned receipt, and
+retains it in trusted local state before the sandboxed tool command runs. It
+rewrites only the verified non-executing Longrun wrapper call with hook-owned
+token and short receipt-handle fields. The sandboxed receipt-only `longrun
+submit` echoes that handle without accessing private Longrun state.
+`PostToolUse` verifies the handle, then the stored signature and all receipt
+fields against the pending record before atomically consuming it and starting
+the command.
 
 **Rationale**: Starting a detached command from the short Bash invocation makes
 process survival, sandbox inheritance, cancellation, and duplicate prevention
@@ -65,10 +68,11 @@ as the same local user.
 
 **Decision**: Session integration teaches the absolute Longrun executable path.
 `PreToolUse` accepts only that path followed by `submit` and a direct argv
-payload. Pipes, redirections, separators, backgrounding, command substitution,
-and shell wrappers are rejected. It safely reconstructs the verified invocation
-with one opaque `--hook-token` argument. Compound scripts use explicit
-`longrun submit-shell`.
+payload, or explicit `submit-shell` when shell mode is configured. Pipes,
+redirections, separators, backgrounding, command substitution, and shell
+wrappers are rejected. It safely reconstructs the verified invocation with
+hook-owned token and short receipt-handle fields; the retained signed receipt
+never enters the sandbox, which never accesses private Longrun state.
 
 **Rationale**: A receipt is trustworthy only if the hook knows which binary
 produced it and the wrapper invocation cannot append forged output.

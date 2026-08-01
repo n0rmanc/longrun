@@ -52,6 +52,7 @@ fn pending(tool_use_id: &str, expires_at_ms: i64) -> PendingSubmission {
         expected_args: vec![NativeString::from_os_string(OsString::from("done"))],
         command_hash: "sha256:test".into(),
         hook_token_hash: "sha256:token".into(),
+        signed_receipt: None,
         created_at_ms: 1,
         expires_at_ms,
         state: PendingState::Pending,

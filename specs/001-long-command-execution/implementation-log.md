@@ -766,3 +766,80 @@ commits required by the constitution.
   --strict --new --online`, a temporary local tap install, `brew test`, and
   `longrun --version` all passed. The temporary formula, tap, and core tap
   used for that check were removed afterward.
+
+## Native Codex Acceptance
+
+- 2026-08-01: completed T101 in a fresh isolated Git repository with its own
+  `HOME`, `CODEX_HOME`, XDG directories, and Longrun state. The exact
+  preparation route was `target/debug/longrun init --codex --json`, followed
+  by `codex` interactive directory trust, `/hooks` review, and `t` to trust
+  the generated SessionStart, PreToolUse, and PostToolUse hooks. The hooks
+  panel then reported all three installed and active.
+- The real signed-in Codex execution was
+  `codex exec --json -c 'model_provider="openai"' --model gpt-5.6-sol -C
+  REPO '<Longrun 90-second command prompt>'`. Its nine-event JSONL trace
+  contains one skill read, exactly one Longrun `submit` command (rewritten by
+  PreToolUse with hook-owned fields), and the same-turn final agent message
+  `Exit code: 0` with `DONE`. It contains no `longrun run`, `wait`, `status`,
+  `list`, `write_stdin`, periodic progress request, or additional agent turn
+  while the command ran.
+- PostToolUse consumed the signed receipt outside the Codex workspace sandbox
+  and ran `/usr/bin/python3 -c 'import time; time.sleep(90); print("DONE")'`
+  once through the configured `:workspace` profile. The persisted result took
+  90,500 ms, exited `0`, kept `DONE` in the local stdout log, kept stderr
+  empty, and returned `delivered_in_turn`.
+- The isolated SQLite evidence recorded one job, one succeeded execution, one
+  consumed receipt, one consumed pending submission, and one
+  `delivered_in_turn` delivery. This proves the real Codex hook path created
+  no duplicate execution or delivery and closes T101.
+
+## Sandbox-Receipt Acceptance Repair
+
+- The first native Codex attempt exposed two real integration boundaries:
+  macOS reported the hook CWD as `/tmp/...` while the native command resolved
+  it as `/private/tmp/...`, and the Codex workspace sandbox could not write
+  Longrun's private state. PreToolUse and PostToolUse now canonicalize CWD,
+  while the trusted PreToolUse hook creates the claimed pending submission and
+  signs its one-time context-bound receipt before sandbox entry.
+- The rewritten sandbox command remains `longrun submit` but carries a
+  hook-owned opaque receipt handle. The signed receipt remains in the trusted
+  pending record; the receipt-only invocation echoes only that handle without
+  reading configuration or creating private state. PostToolUse still verifies
+  the token, HMAC, context, expiry, one-time nonce, and pending job before the
+  Rust runtime becomes the sole execution authority.
+- Focused regression coverage verifies receipt injection and signature,
+  claimed pending state, literal quoted arguments, `/tmp` canonicalization,
+  equal-sign hook-field rejection, receipt submission with inaccessible state,
+  literal child arguments named like hook fields, and trusted configuration
+  enforcement for `submit-shell`. `cargo test --locked --test hooks --test
+  cli --test security --test performance` passed 30 tests.
+
+## Receipt Wrapper Size and Policy Rechecks
+
+- 2026-08-01: the rewritten receipt-only `submit` command now uses the fixed
+  `longrun-hook-receipt` placeholder after `--` and transports only a short
+  opaque receipt handle. The signed receipt remains in the trusted pending
+  record, avoiding both macOS `ARG_MAX` and Linux single-argument limits while
+  preserving the original argv exactly.
+- Codex hook submissions reject per-submission `--config`, and both
+  specification construction and PostToolUse recheck
+  `:danger-full-access` policy before receipt consumption. A policy mismatch
+  leaves the claimed pending record untouched and creates no job.
+- The rendered Codex skill now POSIX-shell-quotes its resolved executable path,
+  including paths containing a double quote.
+
+## Opaque Receipt-Handle Native Acceptance
+
+- 2026-08-01: the Codex app server reported the generated Longrun
+  `PreToolUse`, `PostToolUse`, and `SessionStart` hooks as enabled and
+  `trusted` before the acceptance run.
+- A fresh signed-in Codex execution (thread
+  `019fbbb5-1524-7760-bce7-d734a8985b32`) read the Longrun skill, made exactly
+  one rewritten `longrun submit` call, and then waited in `PostToolUse`. It
+  made no `longrun run`, `wait`, `status`, `list`, `write_stdin`, or periodic
+  model request while the command ran.
+- The hook-delivered result reported exit `0`, stdout `DONE`, and empty stderr.
+  SQLite recorded job `019fbbb5-687b-7df2-88e8-076ad5a8e437` as one
+  `succeeded` execution with duration `90081 ms`, one consumed pending
+  submission and receipt, and one `delivered_in_turn` delivery. This closes
+  T104 and provides current-path evidence for SC-001 and SC-003.

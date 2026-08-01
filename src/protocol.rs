@@ -218,6 +218,8 @@ pub struct PendingSubmission {
     pub expected_args: Vec<NativeString>,
     pub command_hash: String,
     pub hook_token_hash: String,
+    #[serde(default)]
+    pub signed_receipt: Option<String>,
     pub created_at_ms: i64,
     pub expires_at_ms: i64,
     pub state: PendingState,

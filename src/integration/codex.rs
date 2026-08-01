@@ -267,9 +267,18 @@ fn rendered_assets(executable: &Path) -> Result<Vec<(&'static str, Vec<u8>)>> {
         ),
         (
             "plugins/longrun/skills/longrun/SKILL.md",
-            SKILL.as_bytes().to_vec(),
+            render_skill(executable)?.into_bytes(),
         ),
     ])
+}
+
+fn render_skill(executable: &Path) -> Result<String> {
+    render_skill_for(executable, cfg!(windows))
+}
+
+fn render_skill_for(executable: &Path, windows: bool) -> Result<String> {
+    let executable = utf8_path(executable)?;
+    Ok(SKILL.replace("__LONGRUN_EXECUTABLE__", &shell_quote(executable, windows)))
 }
 
 fn render_hooks(executable: &Path) -> Result<String> {
@@ -332,12 +341,16 @@ fn replace_template_strings(value: &mut Value, replacements: &[(&str, String)]) 
 }
 
 fn hook_command(executable: &str, event: &str, windows: bool) -> String {
-    let executable = if windows {
-        format!("\"{}\"", executable.replace('"', "\\\""))
-    } else {
-        format!("'{}'", executable.replace('\'', "'\"'\"'"))
-    };
+    let executable = shell_quote(executable, windows);
     format!("{executable} hook codex {event}")
+}
+
+fn shell_quote(value: &str, windows: bool) -> String {
+    if windows {
+        format!("\"{}\"", value.replace('"', "\\\""))
+    } else {
+        format!("'{}'", value.replace('\'', "'\"'\"'"))
+    }
 }
 
 fn resolved_executable(executable: &Path) -> Result<PathBuf> {
@@ -741,7 +754,7 @@ fn probe_codex(arguments: &[&str]) -> std::result::Result<String, String> {
 mod tests {
     use std::path::Path;
 
-    use super::{hook_command, hooks_include, render_hooks};
+    use super::{hook_command, hooks_include, render_hooks, render_skill_for};
 
     #[test]
     fn rendered_hooks_match_verbatim_windows_paths_after_json_escaping() {
@@ -753,5 +766,15 @@ mod tests {
             hook_command(executable, "post-tool-use", true),
         ];
         assert!(hooks_include(&hooks, &expected));
+    }
+
+    #[test]
+    fn rendered_skill_uses_windows_command_quoting() {
+        let skill = render_skill_for(
+            Path::new(r#"C:\Program Files\Longrun"bin\longrun.exe"#),
+            true,
+        )
+        .expect("render skill");
+        assert!(skill.contains(r#""C:\Program Files\Longrun\"bin\longrun.exe" submit"#));
     }
 }

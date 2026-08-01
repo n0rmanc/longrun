@@ -1,6 +1,7 @@
 use std::time::{Duration, Instant};
 
 use longrun::{
+    config::Config,
     hook::{
         input::{CodexCommonInput, PreToolUseInput},
         output::bounded_result_context,
@@ -10,6 +11,7 @@ use longrun::{
         EnvironmentPolicy, ExecutionMode, ExecutionState, JobResult, JobSpecification,
         NativeString, ShellMode,
     },
+    receipt::ReceiptSigner,
     store::Store,
 };
 use uuid::Uuid;
@@ -38,6 +40,8 @@ fn common() -> CodexCommonInput {
 fn submit_hook_noop_status_and_completion_context_meet_local_p95_budget() {
     let executable = std::env::current_exe().expect("executable");
     let mut store = Store::open_in_memory().expect("store");
+    let signer = ReceiptSigner::new([7; 32]);
+    let config = Config::default();
     let mut submits = Vec::new();
     let mut noops = Vec::new();
     for index in 0..20 {
@@ -52,9 +56,16 @@ fn submit_hook_noop_status_and_completion_context_meet_local_p95_budget() {
         };
         let start = Instant::now();
         assert!(
-            handle_pre_tool_use(&input, &executable, &mut store, 1_000 + index)
-                .expect("submit hook")
-                .is_some()
+            handle_pre_tool_use(
+                &input,
+                &executable,
+                &mut store,
+                &signer,
+                &config,
+                1_000 + index,
+            )
+            .expect("submit hook")
+            .is_some()
         );
         submits.push(start.elapsed());
 
@@ -63,9 +74,16 @@ fn submit_hook_noop_status_and_completion_context_meet_local_p95_budget() {
         unrelated.tool_input = serde_json::json!({"command": "printf unrelated"});
         let start = Instant::now();
         assert!(
-            handle_pre_tool_use(&unrelated, &executable, &mut store, 2_000 + index)
-                .expect("noop hook")
-                .is_none()
+            handle_pre_tool_use(
+                &unrelated,
+                &executable,
+                &mut store,
+                &signer,
+                &config,
+                2_000 + index,
+            )
+            .expect("noop hook")
+            .is_none()
         );
         noops.push(start.elapsed());
     }

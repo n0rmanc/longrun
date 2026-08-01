@@ -187,20 +187,21 @@ modules.
 ### Submission and hook ownership
 
 `PreToolUse` accepts only a direct invocation of the absolute installed
-`longrun` executable with the `submit` subcommand. It rejects outer shell
-composition, records a pending submission keyed by session, turn, tool use,
-working directory, and exact command hash, then rewrites only that verified
-wrapper call to add an opaque one-time hook token. The hook returns
-`permissionDecision: "allow"` only for this non-executing wrapper invocation;
-unrelated Bash calls remain untouched and follow normal approval behavior.
+`longrun` executable with the `submit` or `submit-shell` subcommand. It rejects outer shell
+composition, records a claimed pending submission keyed by session, turn, tool
+use, working directory, and exact command hash, then signs an immutable
+`LONGRUN_RECEIPT_V1` envelope before sandbox entry and retains it in the
+private pending record. It rewrites only that verified wrapper call to add
+hook-owned fields. The sandboxed receipt-only `submit` echoes a short opaque
+receipt handle without accessing Longrun private state.
+The hook returns `permissionDecision: "allow"` only for this non-executing
+wrapper invocation; unrelated Bash calls remain untouched and follow normal
+approval behavior.
 
-`submit` claims the one-time hook token, parses the requested argv, loads the
-installation secret, creates an immutable specification and signed
-`LONGRUN_RECEIPT_V1` envelope containing the hook context, then exits. It never
-starts the requested command. `PostToolUse` accepts the envelope only when its
-signature and every field match the pending hook record, consumes it
-transactionally, and starts the real command. The HMAC covers the exact encoded
-payload bytes, so verification never depends on JSON reserialization order.
+`PostToolUse` accepts the envelope only when its signature and every field
+match the pending hook record, consumes it transactionally, and starts the
+real command. The HMAC covers the exact encoded payload bytes, so verification
+never depends on JSON reserialization order.
 
 The hook returns `continue: false` with `PostToolUse` additional context rather
 than `decision: "block"`. Current Codex hook semantics replace the original

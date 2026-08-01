@@ -69,6 +69,18 @@ pub enum Command {
     Mcp,
 }
 
+impl Cli {
+    pub fn is_hook_receipt_submit(&self) -> bool {
+        matches!(
+            &self.command,
+            Command::Submit(SubmitArgs {
+                hook_receipt: Some(_),
+                ..
+            })
+        )
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum ModeArg {
     Embedded,
@@ -102,6 +114,8 @@ pub struct SubmitArgs {
     pub execution: ExecutionArgs,
     #[arg(long, hide = true, value_name = "TOKEN")]
     pub hook_token: Option<String>,
+    #[arg(long, hide = true, value_name = "RECEIPT")]
+    pub hook_receipt: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -809,72 +823,117 @@ fn result_exit_code(result: &crate::protocol::JobResult) -> ExitCode {
 }
 
 fn submit(arguments: SubmitArgs, paths: &AppPaths, config: &Config) -> Result<ExitCode> {
-    let token = arguments
-        .hook_token
-        .ok_or_else(|| Error::Denied("`submit` requires a hook-issued token".into()))?;
+    let SubmitArgs {
+        execution,
+        hook_token,
+        hook_receipt,
+    } = arguments;
+    if let Some(receipt) = hook_receipt {
+        if !receipt.starts_with("LONGRUN_RECEIPT_HANDLE_V1 ") {
+            return Err(Error::Denied("hook receipts are hook-owned.".into()));
+        }
+        std::io::stdout().write_all(receipt.as_bytes())?;
+        std::io::stdout().write_all(b"\n")?;
+        return Ok(ExitCode::SUCCESS);
+    }
+    let token =
+        hook_token.ok_or_else(|| Error::Denied("`submit` requires a hook-issued token".into()))?;
     let cwd = NativeString::from_os_string(std::env::current_dir()?.into_os_string());
+    let job = job_from_execution_args(execution, cwd, config, now_ms()?)?;
+    issue_submission(token, job, paths)
+}
+
+pub(crate) fn job_from_execution_args(
+    arguments: ExecutionArgs,
+    cwd: NativeString,
+    config: &Config,
+    created_at_ms: i64,
+) -> Result<JobSpecification> {
     let program = NativeString::from_os_string(
         arguments
-            .execution
             .program
             .first()
             .cloned()
             .ok_or_else(|| Error::InvalidInput("missing submitted program".into()))?,
     );
     let args = arguments
-        .execution
         .program
         .into_iter()
         .skip(1)
         .map(NativeString::from_os_string)
         .collect::<Vec<_>>();
-    let job = JobSpecification {
+    let permission_profile = arguments
+        .permission_profile
+        .unwrap_or_else(|| config.execution.permission_profile.clone());
+    if !config.permits_permission_profile(&permission_profile) {
+        return Err(Error::Denied(
+            "danger-full-access requires explicit configuration".into(),
+        ));
+    }
+    Ok(JobSpecification {
         protocol_version: crate::protocol::PROTOCOL_VERSION,
         job_id: Uuid::now_v7(),
         program,
         args,
         cwd,
-        execution_mode: arguments.execution.mode.map_or(
-            ExecutionMode::Embedded,
-            |mode| match mode {
+        execution_mode: arguments
+            .mode
+            .map_or(ExecutionMode::Embedded, |mode| match mode {
                 ModeArg::Embedded => ExecutionMode::Embedded,
                 ModeArg::Durable => ExecutionMode::Durable,
-            },
-        ),
+            }),
         shell_mode: ShellMode::Direct,
         timeout_ms: arguments
-            .execution
             .timeout
             .as_deref()
             .map(parse_duration_ms)
             .transpose()?
             .unwrap_or(config.execution.timeout_ms),
-        permission_profile: arguments
-            .execution
-            .permission_profile
-            .unwrap_or_else(|| config.execution.permission_profile.clone()),
+        permission_profile,
         environment_policy: EnvironmentPolicy {
             pass: config
                 .environment
                 .pass
                 .iter()
-                .chain(arguments.execution.env_pass.iter())
+                .chain(arguments.env_pass.iter())
                 .cloned()
                 .collect(),
             deny_patterns: config.environment.deny_patterns.clone(),
         },
-        created_at_ms: now_ms()?,
+        created_at_ms,
         command_hash: String::new(),
-    };
-    issue_submission(token, job, paths)
+    })
 }
 
 fn submit_shell(arguments: SubmitShellArgs, paths: &AppPaths, config: &Config) -> Result<ExitCode> {
-    let token = arguments
-        .hook_token
+    let SubmitShellArgs { shell, hook_token } = arguments;
+    let token = hook_token
         .ok_or_else(|| Error::Denied("`submit-shell` requires a hook-issued token".into()))?;
     let cwd = NativeString::from_os_string(std::env::current_dir()?.into_os_string());
-    let job = JobSpecification {
+    let job = job_from_shell_args(shell, cwd, config, now_ms()?)?;
+    issue_submission(token, job, paths)
+}
+
+pub(crate) fn job_from_shell_args(
+    arguments: ShellArgs,
+    cwd: NativeString,
+    config: &Config,
+    created_at_ms: i64,
+) -> Result<JobSpecification> {
+    if !config.execution.allow_shell {
+        return Err(Error::Denied(
+            "shell execution requires execution.allow_shell = true".into(),
+        ));
+    }
+    let permission_profile = arguments
+        .permission_profile
+        .unwrap_or_else(|| config.execution.permission_profile.clone());
+    if !config.permits_permission_profile(&permission_profile) {
+        return Err(Error::Denied(
+            "danger-full-access requires explicit configuration".into(),
+        ));
+    }
+    Ok(JobSpecification {
         protocol_version: crate::protocol::PROTOCOL_VERSION,
         job_id: Uuid::now_v7(),
         program: NativeString {
@@ -883,30 +942,25 @@ fn submit_shell(arguments: SubmitShellArgs, paths: &AppPaths, config: &Config) -
         },
         args: vec![NativeString {
             encoding: crate::protocol::NativeEncoding::Utf8,
-            value: arguments.shell.script,
+            value: arguments.script,
         }],
         cwd,
         execution_mode: ExecutionMode::Embedded,
         shell_mode: ShellMode::ExplicitShell,
         timeout_ms: arguments
-            .shell
             .timeout
             .as_deref()
             .map(parse_duration_ms)
             .transpose()?
             .unwrap_or(config.execution.timeout_ms),
-        permission_profile: arguments
-            .shell
-            .permission_profile
-            .unwrap_or_else(|| config.execution.permission_profile.clone()),
+        permission_profile,
         environment_policy: EnvironmentPolicy {
             pass: config.environment.pass.clone(),
             deny_patterns: config.environment.deny_patterns.clone(),
         },
-        created_at_ms: now_ms()?,
+        created_at_ms,
         command_hash: String::new(),
-    };
-    issue_submission(token, job, paths)
+    })
 }
 
 fn issue_submission(
@@ -958,9 +1012,15 @@ async fn hook(arguments: HookArgs, paths: &AppPaths, config: &Config) -> Result<
                 std::io::stdin().read_to_string(&mut source)?;
                 let input: PreToolUseInput = serde_json::from_str(&source)?;
                 let mut store = Store::open(paths.state_dir.join("longrun.sqlite"))?;
-                if let Some(output) =
-                    handle_pre_tool_use(&input, &std::env::current_exe()?, &mut store, now_ms()?)?
-                {
+                let signer = ReceiptSigner::load_or_create(&paths.state_dir.join("receipt.key"))?;
+                if let Some(output) = handle_pre_tool_use(
+                    &input,
+                    &std::env::current_exe()?,
+                    &mut store,
+                    &signer,
+                    config,
+                    now_ms()?,
+                )? {
                     serde_json::to_writer(std::io::stdout(), &output)?;
                     std::io::stdout().write_all(b"\n")?;
                 }

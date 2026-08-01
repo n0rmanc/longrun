@@ -1,23 +1,33 @@
 use std::{
+    ffi::OsString,
+    fs,
     path::Path,
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use clap::Parser;
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 use crate::{
+    cli::{Cli, Command, job_from_execution_args, job_from_shell_args},
+    config::Config,
     error::{Error, Result},
     hook::{input::PreToolUseInput, output::PreToolUseOutput},
     protocol::{NativeString, PendingState, PendingSubmission, sha256_hex},
+    receipt::{ReceiptPayload, ReceiptSigner},
     store::Store,
 };
 
 const PENDING_TTL_MS: i64 = 5 * 60 * 1_000;
+const RECEIPT_HANDLE_PREFIX: &str = "LONGRUN_RECEIPT_HANDLE_V1 ";
 
 pub fn handle_pre_tool_use(
     input: &PreToolUseInput,
     expected_binary: &Path,
     store: &mut Store,
+    signer: &ReceiptSigner,
+    config: &Config,
     now_ms: i64,
 ) -> Result<Option<PreToolUseOutput>> {
     if input.common.hook_event_name != "PreToolUse" || input.tool_name != "Bash" {
@@ -49,57 +59,53 @@ pub fn handle_pre_tool_use(
     if !matches!(subcommand, "submit" | "submit-shell") {
         return Ok(None);
     }
-    if words.iter().any(|word| word == "--hook-token") {
+    let wrapper_options = &words[..words
+        .iter()
+        .position(|word| word == "--")
+        .unwrap_or(words.len())];
+    if wrapper_options.iter().any(|word| {
+        matches!(word.as_str(), "--hook-token" | "--hook-receipt")
+            || word.starts_with("--hook-token=")
+            || word.starts_with("--hook-receipt=")
+    }) {
         return Ok(Some(PreToolUseOutput::deny(
-            "Invalid Longrun submission: hook tokens are hook-owned.",
+            "Invalid Longrun submission: hook fields are hook-owned.",
         )));
     }
-    let (expected_program, expected_args) = match subcommand {
-        "submit" => {
-            let separator = words.iter().position(|word| word == "--");
-            let Some(separator) =
-                separator.filter(|separator| *separator > 1 && *separator + 1 < words.len())
-            else {
-                return Ok(Some(PreToolUseOutput::deny(
-                    "Invalid Longrun submission: direct submit requires `-- PROGRAM ARG...`.",
-                )));
-            };
-            (
-                NativeString {
-                    encoding: crate::protocol::NativeEncoding::Utf8,
-                    value: words[separator + 1].clone(),
-                },
-                words[separator + 2..]
-                    .iter()
-                    .cloned()
-                    .map(|value| NativeString {
-                        encoding: crate::protocol::NativeEncoding::Utf8,
-                        value,
-                    })
-                    .collect(),
-            )
+    if wrapper_options
+        .iter()
+        .any(|word| word == "--config" || word.starts_with("--config="))
+    {
+        return Ok(Some(PreToolUseOutput::deny(
+            "Invalid Longrun submission: --config is not supported by Codex hooks; configure Longrun's trusted hook config instead.",
+        )));
+    }
+    let cwd = NativeString::from_os_string(fs::canonicalize(&input.common.cwd)?.into_os_string());
+    let parsed = match Cli::try_parse_from(words.iter().map(OsString::from)) {
+        Ok(cli) => cli,
+        Err(error) => {
+            return Ok(Some(PreToolUseOutput::deny(format!(
+                "Invalid Longrun submission: {error}"
+            ))));
         }
-        "submit-shell" => {
-            let script = words
-                .windows(2)
-                .find_map(|pair| (pair[0] == "--script").then(|| pair[1].clone()));
-            let Some(script) = script else {
-                return Ok(Some(PreToolUseOutput::deny(
-                    "Invalid Longrun submission: submit-shell requires `--script SCRIPT`.",
-                )));
-            };
-            (
-                NativeString {
-                    encoding: crate::protocol::NativeEncoding::Utf8,
-                    value: "longrun-shell".into(),
-                },
-                vec![NativeString {
-                    encoding: crate::protocol::NativeEncoding::Utf8,
-                    value: script,
-                }],
-            )
+    };
+    let Cli { command, .. } = parsed;
+    let job = match command {
+        Command::Submit(arguments) => {
+            job_from_execution_args(arguments.execution, cwd.clone(), config, now_ms)
         }
-        _ => unreachable!("candidate subcommands are checked above"),
+        Command::SubmitShell(arguments) => {
+            job_from_shell_args(arguments.shell, cwd.clone(), config, now_ms)
+        }
+        _ => Err(Error::InvalidInput("invalid Longrun submission".into())),
+    };
+    let mut job = match job {
+        Ok(job) => job,
+        Err(error) => {
+            return Ok(Some(PreToolUseOutput::deny(format!(
+                "Invalid Longrun submission: {error}"
+            ))));
+        }
     };
     let token = random_token()?;
     let command_hash = sha256_hex(
@@ -107,31 +113,38 @@ pub fn handle_pre_tool_use(
             .map_err(Error::Json)?
             .as_bytes(),
     );
-    let pending = PendingSubmission {
+    job.command_hash = command_hash.clone();
+    let mut pending = PendingSubmission {
         session_id: input.common.session_id.clone(),
         turn_id: input.turn_id.clone(),
         tool_use_id: input.tool_use_id.clone(),
-        cwd: NativeString::from_os_string(input.common.cwd.clone().into_os_string()),
+        cwd,
         binary_path: NativeString {
             encoding: crate::protocol::NativeEncoding::Utf8,
             value: expected_binary.into(),
         },
-        expected_program,
-        expected_args,
+        expected_program: job.program.clone(),
+        expected_args: job.args.clone(),
         command_hash,
         hook_token_hash: sha256_hex(token.as_bytes()),
+        signed_receipt: None,
         created_at_ms: now_ms,
         expires_at_ms: now_ms.saturating_add(PENDING_TTL_MS),
-        state: PendingState::Pending,
+        state: PendingState::Claimed,
     };
+    let receipt = issue_receipt(job, &pending, signer, now_ms)?;
+    pending.signed_receipt = Some(receipt);
     store.cleanup_expired_pending(now_ms)?;
     store.save_pending(&pending)?;
 
-    let mut rewritten = Vec::with_capacity(words.len() + 2);
-    rewritten.extend_from_slice(&words[..2]);
+    let mut rewritten = Vec::with_capacity(words.len() + 4);
+    rewritten.push(words[0].clone());
+    rewritten.push("submit".into());
     rewritten.push("--hook-token".into());
-    rewritten.push(token);
-    rewritten.extend_from_slice(&words[2..]);
+    rewritten.push(token.clone());
+    rewritten.push("--hook-receipt".into());
+    rewritten.push(format!("{RECEIPT_HANDLE_PREFIX}{token}"));
+    rewritten.extend(["--".into(), "longrun-hook-receipt".into()]);
     Ok(Some(PreToolUseOutput::allow(render_shell_words(
         &rewritten,
     ))))
@@ -153,18 +166,38 @@ fn random_token() -> Result<String> {
     Ok(URL_SAFE_NO_PAD.encode(bytes))
 }
 
-pub fn parse_strict_shell_words(command: &str) -> Result<Vec<String>> {
-    if command.chars().any(|character| {
-        matches!(
-            character,
-            ';' | '|' | '&' | '<' | '>' | '`' | '$' | '\n' | '\r'
-        )
-    }) {
-        return Err(Error::InvalidInput(
-            "outer shell composition is not allowed".into(),
-        ));
+fn issue_receipt(
+    job: crate::protocol::JobSpecification,
+    pending: &PendingSubmission,
+    signer: &ReceiptSigner,
+    now_ms: i64,
+) -> Result<String> {
+    let issued = OffsetDateTime::from_unix_timestamp_nanos(i128::from(now_ms) * 1_000_000)
+        .map_err(|error| Error::Unavailable(format!("invalid hook timestamp: {error}")))?;
+    let expires = OffsetDateTime::from_unix_timestamp_nanos(
+        i128::from(pending.expires_at_ms).saturating_mul(1_000_000),
+    )
+    .map_err(|error| Error::Unavailable(format!("invalid pending expiry: {error}")))?;
+    if expires <= issued {
+        return Err(Error::Denied("hook token has expired".into()));
     }
+    let payload = ReceiptPayload::from_job(
+        job,
+        &pending.session_id,
+        &pending.turn_id,
+        &pending.tool_use_id,
+        issued
+            .format(&Rfc3339)
+            .map_err(|error| Error::Unavailable(format!("cannot format receipt time: {error}")))?,
+        expires.format(&Rfc3339).map_err(|error| {
+            Error::Unavailable(format!("cannot format receipt expiry: {error}"))
+        })?,
+        ReceiptSigner::random_nonce()?,
+    );
+    Ok(signer.issue(&payload)?.to_line())
+}
 
+pub fn parse_strict_shell_words(command: &str) -> Result<Vec<String>> {
     let mut words = Vec::new();
     let mut word = String::new();
     let mut quote = None;
@@ -172,6 +205,11 @@ pub fn parse_strict_shell_words(command: &str) -> Result<Vec<String>> {
     let mut active = false;
     let mut characters = command.chars().peekable();
     while let Some(character) = characters.next() {
+        if matches!(character, '\n' | '\r') {
+            return Err(Error::InvalidInput(
+                "outer shell composition is not allowed".into(),
+            ));
+        }
         if escaped {
             word.push(character);
             escaped = false;
@@ -182,12 +220,21 @@ pub fn parse_strict_shell_words(command: &str) -> Result<Vec<String>> {
             Some('\'') if character == '\'' => quote = None,
             Some('"') if character == '"' => quote = None,
             Some('"') if character == '\\' => {
-                if matches!(characters.peek(), Some('"') | Some('\\')) {
-                    escaped = true;
+                if matches!(
+                    characters.peek(),
+                    Some('"') | Some('\\') | Some('$') | Some('`')
+                ) {
+                    word.push(characters.next().expect("peeked character exists"));
+                    active = true;
                 } else {
                     word.push(character);
                     active = true;
                 }
+            }
+            Some('"') if matches!(character, '$' | '`') => {
+                return Err(Error::InvalidInput(
+                    "outer shell composition is not allowed".into(),
+                ));
             }
             Some(_) => {
                 word.push(character);
@@ -198,6 +245,11 @@ pub fn parse_strict_shell_words(command: &str) -> Result<Vec<String>> {
                 active = true;
             }
             None if character == '\\' => escaped = true,
+            None if matches!(character, ';' | '|' | '&' | '<' | '>' | '`' | '$') => {
+                return Err(Error::InvalidInput(
+                    "outer shell composition is not allowed".into(),
+                ));
+            }
             None if character.is_whitespace() => {
                 if active {
                     words.push(std::mem::take(&mut word));

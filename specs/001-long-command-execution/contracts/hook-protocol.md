@@ -48,10 +48,16 @@ Behavior:
 2. Verify the absolute binary path and exact `submit` or `submit-shell`
    invocation shape.
 3. Reject outer shell composition.
-4. Store a short-lived pending submission and one-time hook token.
-5. Rewrite only the verified Longrun wrapper invocation to add
-   `--hook-token TOKEN`.
-6. Return `permissionDecision: "allow"` for that non-executing wrapper only.
+4. Reject per-submission `--config`; trusted hooks use Longrun's configured
+   hook policy.
+5. Store a short-lived claimed pending submission and issue a one-time
+   context-bound signed receipt.
+6. Rewrite only the verified Longrun wrapper invocation to add hook-owned
+   `--hook-token TOKEN` and `--hook-receipt RECEIPT_HANDLE`. The signed
+   receipt remains in Longrun's private pending record. The sandboxed
+   receipt-only `submit` invocation uses a fixed placeholder child argument,
+   echoes the opaque handle, and does not access Longrun private state.
+7. Return `permissionDecision: "allow"` for that non-executing wrapper only.
    Unrelated Bash calls remain no-ops and retain normal approval behavior.
 
 Rewrite output:
@@ -62,7 +68,7 @@ Rewrite output:
     "hookEventName": "PreToolUse",
     "permissionDecision": "allow",
     "updatedInput": {
-      "command": "\"/absolute/path/longrun\" submit --hook-token \"opaque-token\" -- cargo test"
+      "command": "\"/absolute/path/longrun\" submit --hook-token \"opaque-token\" --hook-receipt \"LONGRUN_RECEIPT_HANDLE_V1 opaque-token\" -- longrun-hook-receipt"
     }
   }
 }
@@ -87,10 +93,11 @@ Required fields are the PreToolUse context plus `tool_response`.
 Behavior:
 
 1. No-op unless a matching pending submission exists.
-2. Extract exactly one `LONGRUN_RECEIPT_V1` line from the documented text
+2. Extract exactly one `LONGRUN_RECEIPT_HANDLE_V1` line from the documented text
    response or the text `output` member of a structured response.
-3. Verify signature, freshness, job fields, session, turn, tool use, cwd,
-   binary path, and command hash.
+3. Verify the opaque handle against the pending token, then verify the stored
+   signature, freshness, job fields, session, turn, tool use, cwd, binary
+   path, and command hash.
 4. Consume the pending submission and create the job atomically.
 5. Execute in embedded mode or submit to the durable supervisor.
 6. Wait locally for completion.

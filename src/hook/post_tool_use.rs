@@ -8,7 +8,7 @@ use crate::{
         output::{PostToolUseOutput, bounded_result_context},
     },
     paths::AppPaths,
-    protocol::DeliveryState,
+    protocol::{DeliveryState, sha256_hex},
     receipt::{ReceiptExpectation, ReceiptSigner},
     runner::Runner,
     store::Store,
@@ -17,6 +17,7 @@ use crate::{
 };
 
 const ACTIVE_HOOK_LEASE_GRACE_MS: i64 = 5 * 60 * 1_000;
+const RECEIPT_HANDLE_PREFIX: &str = "LONGRUN_RECEIPT_HANDLE_V1 ";
 
 pub async fn handle_post_tool_use(
     input: &PostToolUseInput,
@@ -39,19 +40,37 @@ pub async fn handle_post_tool_use(
         Ok(pending) => pending,
         Err(_) => return Ok(None),
     };
+    let token = line
+        .strip_prefix(RECEIPT_HANDLE_PREFIX)
+        .ok_or_else(|| Error::InvalidInput("missing Longrun receipt handle prefix".into()))?;
+    if token.is_empty() || sha256_hex(token.as_bytes()) != pending.hook_token_hash {
+        return Err(Error::Denied(
+            "receipt handle does not match pending submission".into(),
+        ));
+    }
     let signer = ReceiptSigner::load_or_create(&paths.state_dir.join("receipt.key"))?;
-    let receipt = signer.parse(line)?;
+    let receipt = signer.parse(
+        pending
+            .signed_receipt
+            .as_deref()
+            .ok_or_else(|| Error::Denied("pending submission has no signed receipt".into()))?,
+    )?;
     let expected = ReceiptExpectation {
         session_id: input.common.session_id.clone(),
         turn_id: input.turn_id.clone(),
         tool_use_id: input.tool_use_id.clone(),
         cwd: crate::protocol::NativeString::from_os_string(
-            input.common.cwd.clone().into_os_string(),
+            std::fs::canonicalize(&input.common.cwd)?.into_os_string(),
         ),
         command_hash: pending.command_hash.clone(),
     };
     let payload = receipt.verify(&signer, &expected, now)?;
     let job = payload.to_job_specification()?;
+    if !config.permits_permission_profile(&job.permission_profile) {
+        return Err(Error::Denied(
+            "danger-full-access requires explicit configuration".into(),
+        ));
+    }
     store.consume_pending_and_create_job(&input.tool_use_id, &payload.nonce, &job, now_ms)?;
     let lease = store.claim_delivery(
         job.job_id,
@@ -105,7 +124,7 @@ fn receipt_line(response: &serde_json::Value) -> Result<Option<&str>> {
     };
     let mut matches = response
         .lines()
-        .filter(|line| line.starts_with("LONGRUN_RECEIPT_V1 "));
+        .filter(|line| line.starts_with(RECEIPT_HANDLE_PREFIX));
     let first = matches.next();
     if matches.next().is_some() {
         return Err(Error::InvalidInput(
@@ -124,23 +143,28 @@ mod tests {
     #[test]
     fn receipt_line_accepts_only_documented_text_shapes() {
         assert_eq!(
-            receipt_line(&json!("LONGRUN_RECEIPT_V1 one")).expect("string"),
-            Some("LONGRUN_RECEIPT_V1 one")
+            receipt_line(&json!("LONGRUN_RECEIPT_HANDLE_V1 one")).expect("string"),
+            Some("LONGRUN_RECEIPT_HANDLE_V1 one")
         );
         assert_eq!(
-            receipt_line(&json!({"output": "LONGRUN_RECEIPT_V1 two"})).expect("output"),
-            Some("LONGRUN_RECEIPT_V1 two")
+            receipt_line(&json!({"output": "LONGRUN_RECEIPT_HANDLE_V1 two"})).expect("output"),
+            Some("LONGRUN_RECEIPT_HANDLE_V1 two")
         );
         assert!(
-            receipt_line(&json!({"stdout": "LONGRUN_RECEIPT_V1 three"}))
+            receipt_line(&json!({"stdout": "LONGRUN_RECEIPT_HANDLE_V1 three"}))
                 .expect("other field")
                 .is_none()
         );
         assert!(
-            receipt_line(&json!({"output": ["LONGRUN_RECEIPT_V1 four"]}))
+            receipt_line(&json!({"output": ["LONGRUN_RECEIPT_HANDLE_V1 four"]}))
                 .expect("non-text output")
                 .is_none()
         );
-        assert!(receipt_line(&json!("LONGRUN_RECEIPT_V1 one\nLONGRUN_RECEIPT_V1 two")).is_err());
+        assert!(
+            receipt_line(&json!(
+                "LONGRUN_RECEIPT_HANDLE_V1 one\nLONGRUN_RECEIPT_HANDLE_V1 two"
+            ))
+            .is_err()
+        );
     }
 }

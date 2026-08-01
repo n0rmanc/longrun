@@ -33,13 +33,16 @@ Exit behavior:
 
 Creates a single-use Codex submission envelope and returns quickly.
 
-The generated Codex hook adds a hidden `--hook-token TOKEN` option. Interactive
-users MUST NOT supply it manually; tokens are single-use and expire quickly.
+The generated Codex hook adds hidden hook-owned `--hook-token TOKEN` and
+`--hook-receipt RECEIPT_HANDLE` options. Interactive users MUST NOT supply either
+option manually. Codex hook submissions also reject `--config`; configure the
+trusted Longrun hook configuration instead. The signed receipt is single-use
+and expires quickly.
 
 Stdout:
 
 ```text
-LONGRUN_RECEIPT_V1 <base64url-payload>.<base64url-signature>
+LONGRUN_RECEIPT_HANDLE_V1 <opaque-token>
 ```
 
 No other stdout is permitted.

@@ -3,10 +3,12 @@ mod unix {
     use std::{ffi::OsString, fs, os::unix::fs::PermissionsExt, path::Path, process::Command};
 
     use longrun::{
+        config::Config,
         hook::{
             input::{CodexCommonInput, PreToolUseInput},
             pre_tool_use::handle_pre_tool_use,
         },
+        receipt::ReceiptSigner,
         store::Store,
     };
     use uuid::Uuid;
@@ -136,12 +138,16 @@ mod unix {
     fn hook_requires_the_absolute_installed_binary_and_rejects_path_shadowing() {
         let mut store = Store::open_in_memory().expect("store");
         let expected = Path::new("/opt/longrun");
+        let signer = ReceiptSigner::new([7; 32]);
+        let config = Config::default();
 
         assert!(
             handle_pre_tool_use(
                 &pre_tool_use("longrun submit -- /bin/echo shadowed"),
                 expected,
                 &mut store,
+                &signer,
+                &config,
                 1,
             )
             .expect("hook")
@@ -152,6 +158,8 @@ mod unix {
                 &pre_tool_use("\"/tmp/longrun\" submit -- /bin/echo shadowed"),
                 expected,
                 &mut store,
+                &signer,
+                &config,
                 1,
             )
             .expect("hook")
@@ -162,6 +170,8 @@ mod unix {
                 &pre_tool_use("longrun submit -- /bin/echo relative"),
                 Path::new("longrun"),
                 &mut store,
+                &signer,
+                &config,
                 1,
             )
             .expect("hook")

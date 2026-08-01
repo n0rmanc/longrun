@@ -27,6 +27,40 @@ fn direct_program_arguments_remain_literal_after_separator() {
 }
 
 #[test]
+fn hook_receipt_precedes_the_unchanged_direct_program_arguments() {
+    let cli = Cli::try_parse_from([
+        "longrun",
+        "submit",
+        "--hook-token",
+        "token",
+        "--hook-receipt",
+        "LONGRUN_RECEIPT_HANDLE_V1 token",
+        "--",
+        "/usr/bin/python3",
+        "-c",
+        "import time; time.sleep(90); print(\"DONE\")",
+    ])
+    .expect("parse hook-rewritten command");
+
+    let Command::Submit(arguments) = cli.command else {
+        panic!("expected submit command");
+    };
+    assert_eq!(arguments.hook_token.as_deref(), Some("token"));
+    assert_eq!(
+        arguments.hook_receipt.as_deref(),
+        Some("LONGRUN_RECEIPT_HANDLE_V1 token")
+    );
+    assert_eq!(
+        arguments.execution.program,
+        vec![
+            OsString::from("/usr/bin/python3"),
+            OsString::from("-c"),
+            OsString::from("import time; time.sleep(90); print(\"DONE\")"),
+        ]
+    );
+}
+
+#[test]
 fn hook_and_internal_worker_commands_are_parsed_but_hidden_from_normal_workflows() {
     let hook = Cli::try_parse_from(["longrun", "hook", "codex", "pre-tool-use"])
         .expect("parse hook command");
@@ -175,6 +209,37 @@ mod integration {
         );
         assert_eq!(output.status.code(), Some(0));
         assert_eq!(output.stdout, vec![0xff, b'\n']);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn hook_receipt_submit_does_not_initialize_private_state() {
+        let (root, _) = setup();
+        let blocked_home = root.join("blocked-home");
+        fs::write(&blocked_home, "not a directory").expect("blocked home");
+        let receipt = "LONGRUN_RECEIPT_HANDLE_V1 token";
+        let output = Command::new(env!("CARGO_BIN_EXE_longrun"))
+            .env("HOME", &blocked_home)
+            .env("XDG_CONFIG_HOME", root.join("blocked-config"))
+            .env("XDG_DATA_HOME", root.join("blocked-data"))
+            .env("XDG_STATE_HOME", root.join("blocked-state"))
+            .args([
+                "submit",
+                "--hook-token",
+                "token",
+                "--hook-receipt",
+                receipt,
+                "--",
+                "/bin/echo",
+                "must-not-run",
+            ])
+            .output()
+            .expect("run receipt submit");
+
+        assert_eq!(output.status.code(), Some(0));
+        assert_eq!(output.stdout, format!("{receipt}\n").as_bytes());
+        assert!(output.stderr.is_empty());
+        assert!(!root.join("blocked-data").exists());
         fs::remove_dir_all(root).expect("cleanup");
     }
 

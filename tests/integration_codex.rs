@@ -98,7 +98,10 @@ mod codex {
 
         let hooks =
             fs::read_to_string(generated_root.join("plugins/longrun/hooks.json")).expect("hooks");
-        let unix = env!("CARGO_BIN_EXE_longrun").replace('\'', "'\"'\"'");
+        let unix = format!(
+            "'{}'",
+            env!("CARGO_BIN_EXE_longrun").replace('\'', "'\"'\"'")
+        );
         let windows = env!("CARGO_BIN_EXE_longrun").replace('"', "\\\"");
         let mut expected_hooks: Value =
             serde_json::from_str(include_str!("../assets/codex/hooks.json")).expect("hook fixture");
@@ -108,7 +111,7 @@ mod codex {
             ("PostToolUse", "post-tool-use"),
         ] {
             let handler = &mut expected_hooks["hooks"][event][0]["hooks"][0];
-            handler["command"] = json!(format!("'{unix}' hook codex {suffix}"));
+            handler["command"] = json!(format!("{unix} hook codex {suffix}"));
             handler["commandWindows"] = json!(format!("\"{windows}\" hook codex {suffix}"));
         }
         assert_eq!(
@@ -127,13 +130,53 @@ mod codex {
         assert_eq!(
             skill,
             include_str!("../assets/codex/skills/longrun/SKILL.md")
+                .replace("__LONGRUN_EXECUTABLE__", &unix)
         );
         assert!(skill.contains("without model polling"));
-        assert!(skill.contains("longrun submit"));
+        assert!(skill.contains(env!("CARGO_BIN_EXE_longrun")));
+        assert!(!skill.contains("__LONGRUN_EXECUTABLE__"));
 
         let codex_log = fs::read_to_string(&log).expect("codex log");
         assert!(codex_log.contains("marketplace\nadd"));
         assert!(codex_log.contains("longrun@longrun-local"));
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn init_shell_quotes_the_skill_executable_path() {
+        let (root, log) = setup();
+        let executable = root.join("bin\"quote").join("longrun");
+        fs::create_dir_all(executable.parent().expect("quoted binary parent"))
+            .expect("create quoted binary parent");
+        fs::copy(env!("CARGO_BIN_EXE_longrun"), &executable).expect("copy quoted binary");
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755))
+            .expect("make quoted binary executable");
+
+        let report = json(
+            &command(&root, &log, &executable)
+                .args(["init", "--codex", "--json"])
+                .output()
+                .expect("init quoted binary"),
+        );
+        let skill = fs::read_to_string(
+            PathBuf::from(report["generated_root"].as_str().expect("root"))
+                .join("plugins/longrun/skills/longrun/SKILL.md"),
+        )
+        .expect("skill");
+        let command = skill
+            .lines()
+            .find(|line| line.contains(" submit -- PROGRAM ARG..."))
+            .expect("submission command");
+        let executable = fs::canonicalize(executable).expect("resolve quoted binary");
+        assert!(command.starts_with(&format!("'{}' submit", executable.display())));
+        assert!(
+            Command::new("/bin/sh")
+                .args(["-n", "-c", command])
+                .status()
+                .expect("check shell syntax")
+                .success()
+        );
+
         fs::remove_dir_all(root).expect("cleanup");
     }
 
