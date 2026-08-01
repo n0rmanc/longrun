@@ -31,6 +31,40 @@ Developers can install from source:
 cargo install --path .
 ```
 
+## Upgrade
+
+Re-run the release installer to replace an existing binary:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/n0rmanc/longrun/main/install.sh | sh
+hash -r
+longrun --version
+longrun init --codex --repair
+longrun doctor --json
+```
+
+`init --codex --repair` refreshes Codex integration after the executable has
+been replaced. Review and trust Longrun's hooks in `/hooks` if Codex prompts.
+
+For a Homebrew installation, re-install the current formula, then repair:
+
+```sh
+brew reinstall --formula https://raw.githubusercontent.com/n0rmanc/longrun/main/Formula/longrun.rb
+longrun init --codex --repair
+longrun doctor --json
+```
+
+For a source installation, update the checkout and install it to the same
+prefix before repairing Codex integration:
+
+```sh
+git pull --ff-only
+cargo install --path . --locked --force --root ~/.local
+hash -r
+longrun init --codex --repair
+longrun doctor --json
+```
+
 ## Codex integration
 
 ```sh
