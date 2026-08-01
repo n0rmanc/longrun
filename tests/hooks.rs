@@ -411,6 +411,26 @@ fn pre_tool_use_ignores_unrelated_or_wrong_binary_commands() {
         .expect("hook")
         .is_none()
     );
+    assert!(
+        handle_pre_tool_use(
+            &input("rtk another-command submit -- echo hello"),
+            &binary,
+            &mut store,
+            1
+        )
+        .expect("hook")
+        .is_none()
+    );
+    assert!(
+        handle_pre_tool_use(
+            &input("rtk --verbose longrun submit -- echo hello"),
+            &binary,
+            &mut store,
+            1
+        )
+        .expect("hook")
+        .is_none()
+    );
 }
 
 #[test]
@@ -481,6 +501,40 @@ fn pre_tool_use_rewrites_only_verified_submit_wrapper() {
         .expect("verify receipt");
     assert_eq!(payload.program.value, "echo");
     assert_eq!(payload.args[0].value, "--literal");
+}
+
+#[test]
+fn pre_tool_use_normalizes_the_exact_rtk_longrun_wrapper() {
+    let mut store = Store::open_in_memory().expect("store");
+    let binary = test_binary();
+    let pre_tool_input = input("rtk longrun submit -- /bin/echo --literal");
+    let signer = ReceiptSigner::new([7; 32]);
+    let output = handle_pre_tool_use_with_receipt(
+        &pre_tool_input,
+        &binary,
+        &mut store,
+        &signer,
+        &Config::default(),
+        longrun::hook::pre_tool_use::now_ms().expect("clock"),
+    )
+    .expect("hook")
+    .expect("allow output");
+
+    let command = output
+        .hook_specific_output
+        .updated_input
+        .expect("rewrite")
+        .command;
+    let words = parse_strict_shell_words(&command).expect("parse rewrite");
+    assert_eq!(words[0], binary.display().to_string());
+    assert_eq!(words[1], "submit");
+    assert!(!words.iter().any(|word| word == "rtk"));
+
+    let pending = store
+        .pending(&pre_tool_input.tool_use_id)
+        .expect("pending submission");
+    assert_eq!(pending.expected_program.value, "/bin/echo");
+    assert_eq!(pending.expected_args[0].value, "--literal");
 }
 
 #[cfg(unix)]
@@ -566,6 +620,34 @@ fn pre_tool_use_rejects_outer_shell_composition() {
         output.hook_specific_output.permission_decision.as_deref(),
         Some("deny")
     );
+}
+
+#[test]
+fn pre_tool_use_rejects_outer_shell_composition_after_rtk_longrun_submit() {
+    let mut store = Store::open_in_memory().expect("store");
+    let binary = test_binary();
+    for command in [
+        "rtk longrun submit -- /bin/echo ok; rm -rf /",
+        "rtk\tlongrun submit -- /bin/echo ok; rm -rf /",
+        "\"rtk\" longrun submit -- /bin/echo ok; rm -rf /",
+    ] {
+        let output = handle_pre_tool_use(&input(command), &binary, &mut store, 1)
+            .expect("hook")
+            .expect("deny output");
+
+        assert_eq!(
+            output.hook_specific_output.permission_decision.as_deref(),
+            Some("deny")
+        );
+        assert!(
+            output
+                .hook_specific_output
+                .permission_decision_reason
+                .as_deref()
+                .expect("deny reason")
+                .contains("outer shell composition")
+        );
+    }
 }
 
 #[test]

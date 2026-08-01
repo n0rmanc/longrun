@@ -21,6 +21,8 @@ use crate::{
 
 const PENDING_TTL_MS: i64 = 5 * 60 * 1_000;
 const RECEIPT_HANDLE_PREFIX: &str = "LONGRUN_RECEIPT_HANDLE_V1 ";
+const RTK_WRAPPER: &str = "rtk";
+const RTK_LONGRUN_COMMAND: &str = "longrun";
 
 pub fn handle_pre_tool_use(
     input: &PreToolUseInput,
@@ -41,18 +43,18 @@ pub fn handle_pre_tool_use(
         .ok_or_else(|| Error::Unavailable("Longrun executable path is not UTF-8".into()))?;
     let words = match parse_strict_shell_words(command) {
         Ok(words) => words,
-        Err(error) if command.contains(expected_binary) => {
+        Err(error)
+            if command.contains(expected_binary) || looks_like_rtk_longrun_submission(command) =>
+        {
             return Ok(Some(PreToolUseOutput::deny(format!(
                 "Invalid Longrun submission: {error}"
             ))));
         }
         Err(_) => return Ok(None),
     };
-    if words.first().map(String::as_str) != Some(expected_binary)
-        || !Path::new(expected_binary).is_absolute()
-    {
+    let Some(words) = normalize_submission_words(words, expected_binary) else {
         return Ok(None);
-    }
+    };
     let Some(subcommand) = words.get(1).map(String::as_str) else {
         return Ok(None);
     };
@@ -148,6 +150,92 @@ pub fn handle_pre_tool_use(
     Ok(Some(PreToolUseOutput::allow(render_shell_words(
         &rewritten,
     ))))
+}
+
+fn normalize_submission_words(words: Vec<String>, expected_binary: &str) -> Option<Vec<String>> {
+    if !Path::new(expected_binary).is_absolute() {
+        return None;
+    }
+    if words.first().map(String::as_str) == Some(expected_binary) {
+        return Some(words);
+    }
+    let supported_rtk_target =
+        matches!(words.get(1).map(String::as_str), Some(RTK_LONGRUN_COMMAND));
+    if words.first().map(String::as_str) != Some(RTK_WRAPPER) || !supported_rtk_target {
+        return None;
+    }
+
+    let mut normalized = Vec::with_capacity(words.len() - 1);
+    normalized.push(expected_binary.into());
+    normalized.extend(words.into_iter().skip(2));
+    Some(normalized)
+}
+
+fn looks_like_rtk_longrun_submission(command: &str) -> bool {
+    matches!(
+        shell_prefix_words(command, 3).as_slice(),
+        [wrapper, target, subcommand]
+            if wrapper == RTK_WRAPPER
+                && target == RTK_LONGRUN_COMMAND
+                && matches!(subcommand.as_str(), "submit" | "submit-shell")
+    )
+}
+
+fn shell_prefix_words(command: &str, limit: usize) -> Vec<String> {
+    let mut words = Vec::with_capacity(limit);
+    let mut word = String::new();
+    let mut quote = None;
+    let mut escaped = false;
+    let mut active = false;
+
+    for character in command.chars() {
+        if escaped {
+            word.push(character);
+            escaped = false;
+            active = true;
+            continue;
+        }
+        match quote {
+            Some('\'') if character == '\'' => quote = None,
+            Some('"') if character == '"' => quote = None,
+            Some(_) => {
+                word.push(character);
+                active = true;
+            }
+            None if character == '\'' || character == '"' => {
+                quote = Some(character);
+                active = true;
+            }
+            None if character == '\\' => escaped = true,
+            None if character.is_whitespace() => {
+                if active {
+                    words.push(std::mem::take(&mut word));
+                    if words.len() == limit {
+                        return words;
+                    }
+                    active = false;
+                }
+            }
+            None if matches!(
+                character,
+                ';' | '|' | '&' | '<' | '>' | '`' | '$' | '\n' | '\r'
+            ) =>
+            {
+                if active {
+                    words.push(std::mem::take(&mut word));
+                }
+                return words;
+            }
+            None => {
+                word.push(character);
+                active = true;
+            }
+        }
+    }
+    if active {
+        words.push(word);
+    }
+    words
 }
 
 pub fn now_ms() -> Result<i64> {

@@ -43,6 +43,17 @@ data directory, installs `longrun@longrun-local` through the Codex CLI, and
 uses the resolved absolute path of the executable in every generated hook.
 Review and trust the hooks in Codex with `/hooks`.
 
+If project instructions require RTK, Codex may submit through the one supported
+wrapper:
+
+```sh
+rtk longrun submit -- PROGRAM ARG...
+```
+
+Longrun's `PreToolUse` hook validates that exact form and rewrites it to the
+installed absolute Longrun binary before issuing a receipt. Other wrappers are
+not supported.
+
 Repair after moving or replacing the binary:
 
 ```sh

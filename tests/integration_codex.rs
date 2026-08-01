@@ -134,6 +134,7 @@ mod codex {
         );
         assert!(skill.contains("without model polling"));
         assert!(skill.contains(env!("CARGO_BIN_EXE_longrun")));
+        assert!(skill.contains("rtk longrun submit"));
         assert!(!skill.contains("__LONGRUN_EXECUTABLE__"));
 
         let codex_log = fs::read_to_string(&log).expect("codex log");

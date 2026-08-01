@@ -186,10 +186,12 @@ modules.
 
 ### Submission and hook ownership
 
-`PreToolUse` accepts only a direct invocation of the absolute installed
-`longrun` executable with the `submit` or `submit-shell` subcommand. It rejects outer shell
-composition, records a claimed pending submission keyed by session, turn, tool
-use, working directory, and exact command hash, then signs an immutable
+`PreToolUse` accepts a direct invocation of the absolute installed `longrun`
+executable, or the exact `rtk longrun` wrapper required by RTK-governed
+projects, with the `submit` or `submit-shell` subcommand. It strips the
+recognized RTK wrapper, rejects outer shell composition and every other
+wrapper, records a claimed pending submission keyed by session, turn, tool use,
+working directory, and exact command hash, then signs an immutable
 `LONGRUN_RECEIPT_V1` envelope before sandbox entry and retains it in the
 private pending record. It rewrites only that verified wrapper call to add
 hook-owned fields. The sandboxed receipt-only `submit` echoes a short opaque
