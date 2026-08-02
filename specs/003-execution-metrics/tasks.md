@@ -21,7 +21,7 @@ implemented and validated independently after the shared metrics foundation.
 
 **Purpose**: Add the feature module without changing command behavior.
 
-- [ ] T001 Create and export the metrics module in `src/metrics.rs` and `src/lib.rs`
+- [x] T001 Create and export the metrics module in `src/metrics.rs` and `src/lib.rs`
 
 ---
 
@@ -32,10 +32,10 @@ user story.
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T002 Define `ExecutionMetric`, `GainReport`, `OutcomeCounts`, `ProgramSummary`, and strict serde validation in `src/metrics.rs`
-- [ ] T003 Implement terminal-outcome classification, executable-basename normalization, and completion timestamp handling in `src/metrics.rs`
-- [ ] T004 Implement private per-record metric publication, invalid-record skipping, metrics scanning, and metrics-only clear in `src/metrics.rs`
-- [ ] T005 Add focused tests for metric schema, all terminal outcome classifications, outcome-count invariants, atomic record visibility, invalid records, privacy fields, and clear ordering in `tests/metrics.rs`
+- [x] T002 Define `ExecutionMetric`, `GainReport`, `OutcomeCounts`, `ProgramSummary`, and strict serde validation in `src/metrics.rs`
+- [x] T003 Implement terminal-outcome classification, executable-basename normalization, and completion timestamp handling in `src/metrics.rs`
+- [x] T004 Implement private per-record metric publication, invalid-record skipping, metrics scanning, and metrics-only clear in `src/metrics.rs`
+- [x] T005 Add focused tests for metric schema, all terminal outcome classifications, outcome-count invariants, atomic record visibility, invalid records, privacy fields, and clear ordering in `tests/metrics.rs`
 
 **Checkpoint**: The metrics module can safely record and aggregate terminal
 metadata without knowing whether the caller is direct CLI or Codex hook mode.
