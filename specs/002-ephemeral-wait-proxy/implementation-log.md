@@ -63,10 +63,49 @@ The 125-second harness observed one receipt-stub path, one PostToolUse wait,
 one target start, and one same-turn bounded result. No worker, supervisor,
 result database, or Longrun-owned output log was created.
 
+## Checkpoint: generic GitHub and Oracle targets
+
+Validation on 2026-08-02 used the canonical generic command surface:
+
+```text
+target/debug/longrun -- gh run watch 30700238163 --repo n0rmanc/longrun --exit-status
+Run CI (30700238163) has already completed with 'success'
+
+target/debug/longrun --timeout 10m -- oracle --engine browser \
+  --browser-manual-login \
+  --browser-manual-login-profile-dir /Users/norman/.oracle/browser-profile \
+  --browser-auto-reattach-delay 5s \
+  --browser-auto-reattach-interval 3s \
+  --browser-auto-reattach-timeout 60s \
+  --browser-keep-browser \
+  --model gpt-5-pro \
+  -p 'Reply exactly ORACLE_LONGRUN_OK'
+Answer: ORACLE_LONGRUN_OK
+23.0s; resolved model gpt-5-pro; browser run completed once
+```
+
+These runs used no Longrun-specific GitHub or Oracle subcommand and no model
+polling loop in the caller. The wrapped tools performed only their own normal
+polling/session behavior.
+
+The RTK wrapper was also validated against the new binary on `PATH`:
+
+```text
+PATH=target/debug:$PATH rtk longrun gh run watch 30700238163 --repo n0rmanc/longrun --exit-status
+Run CI (30700238163) has already completed with 'success'
+
+PATH=target/debug:$PATH rtk longrun -- /bin/sh -c 'sleep 1; printf "rtk-longrun-ok\n"'
+rtk-longrun-ok
+```
+
+An un-upgraded `longrun` earlier in `PATH` still exposes the removed legacy
+subcommands; `rtk longrun` delegates to that binary. Upgrade the binary and
+run `longrun init --codex --repair` before testing the new transparent form.
+
 ## Remaining release-gated validation
 
-The deterministic implementation and active-session acceptance path pass.
-Release-gated GitHub Actions and Oracle browser scenarios still need explicit
-credentials, a controlled target, and live verification before claiming the
-complete quickstart matrix. Process cancellation/leader-exit coverage and
-old-state/manual-rerun inspection also remain listed in `tasks.md`.
+The deterministic implementation, the 125-second active-session acceptance
+path, and direct generic GitHub/Oracle targets pass. Full Codex-hook-mode
+GitHub/Oracle scenarios (including failure/auth cases), process
+cancellation/leader-exit coverage, and old-state/manual-rerun inspection
+remain listed in `tasks.md`.

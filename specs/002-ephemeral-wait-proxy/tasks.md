@@ -107,7 +107,7 @@ forms; verify literal argv and target status preservation.
 - [X] T029 [US2] Implement canonical target parsing, reserved management commands, explicit separator handling, and removed-command errors in `src/cli.rs`
 - [X] T030 [US2] Implement direct terminal/CI result rendering and target exit-code propagation in `src/cli.rs`
 - [X] T031 [US2] Add deterministic generic passthrough and quickstart smoke coverage for GitHub/Oracle argument preservation in `tests/fixtures/longrun_target.rs`
-- [ ] T032 [US2] Run direct, GitHub, and Oracle validation according to `specs/002-ephemeral-wait-proxy/quickstart.md` and record evidence in `specs/002-ephemeral-wait-proxy/implementation-log.md`
+- [X] T032 [US2] Run direct, GitHub, and Oracle validation according to `specs/002-ephemeral-wait-proxy/quickstart.md` and record evidence in `specs/002-ephemeral-wait-proxy/implementation-log.md`
 
 **Checkpoint**: User Story 2 works without special CI/Oracle Longrun commands
 and without exposing the handoff protocol.
@@ -282,3 +282,14 @@ implementation.
 - Every task has a concrete file path and is independently reviewable.
 - No task adds a new execution backend or durable scheduler.
 - Manual rerun is the only recovery behavior for lost ownership.
+
+## Phase 9: Convergence
+
+The deterministic generic wait path is implemented, but the following
+spec-required evidence is still missing:
+
+- [ ] T063 Add lifecycle tests for cancellation, handled signals, leader exit, descendant cleanup, and documented uncatchable owner death per FR-014, FR-015, and SC-005 (partial)
+- [ ] T064 Add lost-delivery, manual-rerun, old-state inertness, and no-persistent-artifact tests per FR-012, FR-013, FR-022, and SC-004 (missing)
+- [ ] T065 Add denied filesystem/network, protected-environment, forged-receipt, prompt-injection, and no-hook-spill tests per FR-011, FR-017, FR-019, and SC-006/SC-007 (partial)
+- [ ] T066 Add ignored Codex-hook GitHub Actions and Oracle browser acceptance harnesses covering one invocation, failure/auth behavior, bounded output, and no reattachment per US2 and SC-011 (missing)
+- [ ] T067 Run the complete quickstart matrix and map direct, RTK, active-session, GitHub, Oracle, lifecycle, security, and upgrade evidence to FR/SC coverage per SC-001–SC-012 (missing)
