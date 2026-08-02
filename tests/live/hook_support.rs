@@ -15,14 +15,6 @@ pub fn test_root(prefix: &str) -> PathBuf {
     fs::create_dir_all(root.join("bin")).expect("bin");
     fs::create_dir_all(root.join("data")).expect("data");
     fs::create_dir_all(root.join("runtime")).expect("runtime");
-    let config = "[execution]\nallow_danger_full_access = true\n";
-    let config_dir = if cfg!(target_os = "macos") {
-        root.join("home/Library/Application Support/dev.longrun.Longrun")
-    } else {
-        root.join("config/longrun")
-    };
-    fs::create_dir_all(&config_dir).expect("config");
-    fs::write(config_dir.join("config.toml"), config).expect("config");
     root
 }
 

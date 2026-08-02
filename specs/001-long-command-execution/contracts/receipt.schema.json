@@ -16,8 +16,6 @@
     "execution_mode",
     "shell_mode",
     "timeout_ms",
-    "permission_profile",
-    "environment_policy",
     "command_hash",
     "nonce",
     "issued_at",
@@ -64,29 +62,6 @@
     "timeout_ms": {
       "type": "integer",
       "minimum": 1
-    },
-    "permission_profile": {
-      "type": "string",
-      "minLength": 1
-    },
-    "environment_policy": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["pass", "deny_patterns"],
-      "properties": {
-        "pass": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "deny_patterns": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        }
-      }
     },
     "command_hash": {
       "type": "string",

@@ -206,7 +206,6 @@ pub async fn doctor(paths: &AppPaths, config: &Config) -> DoctorReport {
         codex_plugin_activation_check(),
         integration_check(paths, &executable),
         hooks_check(paths, &executable),
-        sandbox_profile_check(config),
         timeout_margin_check(config),
         platform_process_control_check(),
     ];
@@ -601,27 +600,6 @@ fn codex_plugin_activation_check() -> DoctorCheck {
             format!("{PLUGIN_SELECTOR} is not installed"),
         ),
         Err(error) => check("codex_plugin_activation", false, true, error),
-    }
-}
-
-fn sandbox_profile_check(config: &Config) -> DoctorCheck {
-    let profile = &config.execution.permission_profile;
-    if !config.permits_permission_profile(profile) {
-        return check(
-            "sandbox_profile",
-            false,
-            true,
-            format!("{profile} is not enabled in Longrun configuration"),
-        );
-    }
-    match probe_codex(&["sandbox", "--help"]) {
-        Ok(_) => check(
-            "sandbox_profile",
-            true,
-            true,
-            format!("{profile} is configured and Codex sandbox is available"),
-        ),
-        Err(error) => check("sandbox_profile", false, true, error),
     }
 }
 

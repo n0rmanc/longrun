@@ -4,8 +4,7 @@ use longrun::{
     metrics::{self, MetricOutcome},
     paths::AppPaths,
     protocol::{
-        CapturedOutput, EnvironmentPolicy, NativeString, PROTOCOL_VERSION, ResultEnvelope,
-        TargetSpec, TerminalReason,
+        CapturedOutput, NativeString, PROTOCOL_VERSION, ResultEnvelope, TargetSpec, TerminalReason,
     },
     runner::ExecutionMode,
 };
@@ -32,8 +31,6 @@ fn target(program: &str, args: &[&str]) -> TargetSpec {
             .collect(),
         cwd: NativeString::from_os_string("/private/test-cwd".into()),
         timeout_ms: 1_000,
-        permission_profile: ":workspace".into(),
-        environment_policy: EnvironmentPolicy::default(),
         created_at_ms: 1,
         command_hash: "sha256:test".into(),
     }

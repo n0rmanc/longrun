@@ -190,20 +190,20 @@ mod integration {
     }
 
     #[test]
-    fn direct_target_copies_only_requested_environment() {
+    fn direct_target_inherits_environment() {
         let root = setup();
         let allowed = format!("LONGRUN_ALLOWED_{}", Uuid::now_v7().simple());
         let blocked = format!("LONGRUN_BLOCKED_SECRET_{}", Uuid::now_v7().simple());
         let script =
             format!("printf '%s|%s' \"${{{allowed}:-missing}}\" \"${{{blocked}:-missing}}\"");
         let output = command(&root)
-            .args(["--env-pass", &allowed, "--", "/bin/sh", "-c", &script])
+            .args(["--", "/bin/sh", "-c", &script])
             .env(&allowed, "allowed")
             .env(&blocked, "blocked")
             .output()
             .expect("run longrun");
         assert_eq!(output.status.code(), Some(0));
-        assert_eq!(output.stdout, b"allowed|missing");
+        assert_eq!(output.stdout, b"allowed|blocked");
         fs::remove_dir_all(root).expect("cleanup");
     }
 

@@ -241,7 +241,7 @@ mod codex {
     }
 
     #[test]
-    fn doctor_reports_codex_plugin_hooks_sandbox_and_timeout_margin() {
+    fn doctor_reports_codex_plugin_hooks_and_timeout_margin() {
         let (root, log) = setup();
         json(&run(&root, &log, &["init", "--codex", "--json"]));
         let report = json(&run(&root, &log, &["doctor", "--json"]));
@@ -254,7 +254,6 @@ mod codex {
             "codex_plugin_commands",
             "codex_plugin_activation",
             "hooks",
-            "sandbox_profile",
             "platform_process_control",
             "handoff_directory",
             "timeout_margin",

@@ -14,8 +14,6 @@ Immutable description of a requested command.
 | execution_mode | embedded or durable | Immutable after acceptance |
 | shell_mode | direct or explicit-shell | Direct by default |
 | timeout_ms | integer | Positive and within configured maximum |
-| permission_profile | string | Defaults to `:workspace` |
-| environment_policy | reference | Explicit allow and deny rules |
 | created_at | timestamp | UTC |
 | command_hash | digest | Covers execution-relevant fields |
 
@@ -196,8 +194,8 @@ Tracks files and Codex selectors owned by Longrun.
 
 Validated user policy grouped into:
 
-- execution: mode, timeout, concurrency, permission profile, shell and
-  danger-full-access gates;
+- execution: mode, timeout, concurrency, permission profile, and shell
+  controls;
 - output: tail lines, model byte limit, redaction;
 - environment: safe inheritance, explicit pass-through, deny patterns;
 - recovery: session-start delivery, automatic resume, retry budget;

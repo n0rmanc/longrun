@@ -17,8 +17,6 @@ PostToolUse.
 | `stub_command_hash` | digest | Binds the generated fast receipt stub. |
 | `program` | native string | Target program to execute. |
 | `args` | list of native strings | Passed literally; no shell reconstruction. |
-| `permission_profile` | optional string | Required and immutable for Codex-hook execution; absent for direct terminal/CI execution. |
-| `environment_policy` | policy value | Allowlist and deny patterns captured for the handoff. |
 | `timeout_ms` | unsigned integer | Must leave margin for cleanup and result finalization. |
 | `termination_grace_ms` | unsigned integer | Used before forced tree termination. |
 | `forced_cleanup_margin_ms` | unsigned integer | Bounds the post-grace forced-cleanup window. |
@@ -47,7 +45,7 @@ An in-memory execution owned by the active PostToolUse process.
 | Field | Type | Rules |
 | --- | --- | --- |
 | `program` | native string | Comes only from the claimed handoff. |
-| `args` | list of native strings | Passed literally to the sandbox launcher. |
+| `args` | list of native strings | Passed literally to the target process. |
 | `started_at` | timestamp | Set after the target is spawned. |
 | `terminal_reason` | enum | `exited`, `signaled`, `timed_out`, `cancelled`, `owner_shutdown`, or `spawn_failed`. |
 | `exit_code` | optional integer | Exact OS exit status when available; otherwise absent. |
@@ -59,7 +57,9 @@ An in-memory execution owned by the active PostToolUse process.
 | `stderr_truncated` | boolean | True when older stderr was discarded. |
 | `duration_ms` | unsigned integer | Monotonic elapsed duration. |
 
-No TargetExecution is persisted after the active invocation finishes.
+The target inherits the active owner process environment. Longrun does not add
+a sandbox or filter that environment. No TargetExecution is persisted after
+the active invocation finishes.
 
 ## ResultEnvelope
 

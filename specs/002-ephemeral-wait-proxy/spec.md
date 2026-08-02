@@ -15,11 +15,12 @@ turn. Use only an ephemeral PreToolUse/PostToolUse handoff. Do not use a
 durable supervisor, per-job worker process, completed-result persistence,
 recovery after a dead session, automatic retry, or a second Longrun approval
 prompt. When the hook owner ends on handled or observable shutdown, terminate
-the owned process tree and require manual rerun. Preserve explicit Codex
-sandbox permission profiles, fail-closed policy, direct-argument safety,
-bounded output, and human/CI synchronous execution. Support both longrun
-PROGRAM ARG... and rtk longrun PROGRAM ARG... without special CI or Oracle
-subcommands."
+the owned process tree and require manual rerun. Codex remains responsible for
+command approval and sandbox policy; Longrun must not reproduce that policy,
+add a second permission gate, or launch a second sandbox. Preserve
+direct-argument safety, inherited hook environment, bounded output, and
+human/CI synchronous execution. Support both longrun PROGRAM ARG... and rtk
+longrun PROGRAM ARG... without special CI or Oracle subcommands."
 
 ## User Scenarios & Testing
 
@@ -107,30 +108,30 @@ terminated, no result is later recovered, and a manual rerun is required.
 4. **Given** a handoff is missing, expired, malformed, mismatched, or already
    claimed, **when** a hook receives it, **then** no target starts.
 
-### User Story 4 - Preserve Explicit Permission and Bounded Context (Priority: P1)
+### User Story 4 - Respect Codex Boundaries and Bound Context (Priority: P1)
 
 As a security-conscious user, I want Longrun to wait for commands without
-creating a second approval system or silently widening the command's sandbox.
+creating a second approval system, sandbox, or environment policy.
 
 **Why this priority**: Avoiding polling is not useful if the waiting proxy
 weakens Codex's execution boundary or floods the model context with output.
 
-**Independent Test**: Run commands under allowed and denied sandbox profiles,
-attempt secret inheritance and shell composition, and generate output larger
-than the configured result budget; verify fail-closed execution and bounded
-untrusted result data.
+**Independent Test**: Run an approved hook command with inherited environment
+and shell composition expressed as explicit target arguments, then generate
+output larger than the configured result budget; verify that Longrun does not
+add a sandbox or filter and still returns bounded untrusted result data.
 
 **Acceptance Scenarios**:
 
-1. **Given** a named permission profile is unavailable or disallowed for a
-   Codex-hook invocation, **when** Longrun prepares a target, **then** it fails
-   closed without a broader-profile retry or an additional approval prompt.
-2. **Given** a target requests a denied filesystem or network operation, **when**
-   it runs, **then** the operation fails under the configured profile and
-   Longrun does not escalate permissions.
-3. **Given** the parent environment contains protected variables, **when** the
-   target starts without explicit permission to inherit them, **then** those
-   values are absent from the target environment.
+1. **Given** Codex has approved and invoked a Longrun command, **when**
+   PostToolUse starts the target, **then** Longrun launches the target directly
+   with the captured argv, cwd, and hook-inherited environment.
+2. **Given** a target needs filesystem, network, or credential access, **when**
+   it runs, **then** Codex's already-selected execution boundary and the hook
+   environment remain the only external policy inputs; Longrun adds no
+   escalation, filtering, or second prompt.
+3. **Given** the hook environment contains a variable, **when** the target
+   starts, **then** Longrun does not remove or selectively pass that variable.
 4. **Given** the target emits very large, binary, or instruction-like output,
    **when** completion is delivered, **then** the model receives bounded escaped
    tails, byte counts, truncation metadata, and an untrusted-output marker.
@@ -180,8 +181,8 @@ configuration.
 - Windows process containment assignment fails before the target is resumed.
 - The configured timeout leaves no margin for cleanup and result serialization.
 - The working directory disappears before the target starts.
-- A network-disabled profile is used for `gh` or Oracle.
-- Required authentication variables are absent or not explicitly allowed.
+- The hook environment lacks credentials required by `gh` or Oracle.
+- Codex approval is missing or the installed hook is not trusted.
 - Oracle creates its own browser/session artifacts outside Longrun's state.
 - An old SQLite database, completed result, service, or recovery record remains
   from a prior Longrun version.
@@ -205,7 +206,7 @@ configuration.
   substitution, redirection, background execution, unsupported wrappers, and
   multiple Longrun invocations in one shell command.
 - **FR-006**: The integration MUST create only a protected handoff containing
-  the origin identity, target arguments, immutable policy, and expiry. The
+  the origin identity, target arguments, execution limits, and expiry. The
   expiry MUST use a configured `handoff_ttl_ms` with a default of 300000 ms and
   a maximum of 900000 ms.
 - **FR-007**: The handoff MUST transition once from prepared to armed to claimed
@@ -236,19 +237,16 @@ configuration.
   owner death.
 - **FR-016**: Windows implementations MUST contain the target in a kill-on-close
   Job Object before resuming it.
-- **FR-017**: Codex-hook execution MUST use an explicitly configured named
-  Codex sandbox profile with managed requirements included. If the launcher
-  cannot resolve the profile or rejects managed requirements, Longrun MUST
-  fail closed with a diagnostic. Direct terminal/CI execution MUST remain
-  usable without a Codex installation and MUST use the shared native process
-  controls instead of silently bypassing or inventing a Codex profile.
-- **FR-018**: Longrun MUST NOT add a second user approval prompt, automatically
-  approve permission escalation, or silently widen the configured profile. The
-  trusted hook and immutable named profile are the authorization boundary;
-  Longrun MUST NOT claim that a PreToolUse approval for the receipt stub
-  represents a separate transient approval for the hidden target.
-- **FR-019**: Longrun MUST clear the target environment by default and pass
-  protected or authentication variables only through explicit policy.
+- **FR-017**: Codex-hook execution MUST launch the captured target directly
+  through the shared native runner in the hook's inherited environment.
+  Longrun MUST NOT invoke `codex sandbox`, create a second sandbox, or require
+  a Codex installation for direct terminal/CI execution.
+- **FR-018**: Longrun MUST NOT add a second user approval prompt, permission
+  gate, environment filter, or permission-escalation path. Codex approval and
+  sandbox policy remain outside Longrun's execution logic.
+- **FR-019**: Longrun MUST preserve the target's captured argv, canonical cwd,
+  and hook-inherited environment without clearing, redacting, or selectively
+  passing variables.
 - **FR-020**: Direct argument mode MUST pass arguments literally and Longrun
   MUST NOT evaluate outer-shell syntax. Users who explicitly need shell
   semantics MUST invoke the shell as the target program, for example
@@ -272,17 +270,16 @@ configuration.
 
 - **Ephemeral Handoff**: A one-way record connecting one visible Longrun
   invocation to one PostToolUse execution. It is governed by the configured TTL
-  and contains origin identity, native target arguments, policy snapshot,
+  and contains origin identity, native target arguments, execution snapshot,
   expiry, and claim state.
 - **Target Execution**: The single locally owned process-tree attempt launched
   after a handoff is claimed. It has one terminal reason and one target exit
   status when the operating system provides one.
 - **Result Envelope**: The bounded, escaped, untrusted data returned to the
   active Codex turn or printed for a direct terminal/CI invocation.
-- **Permission Snapshot**: The named sandbox profile and environment/output
-  policy captured for the handoff and applied without automatic widening,
-  including timeout, termination, forced-cleanup, and result-serialization
-  margins.
+- **Execution Snapshot**: The target argv, canonical cwd, timeout,
+  termination, forced-cleanup, result-serialization, and output limits captured
+  for the handoff. Codex approval and sandbox policy are not Longrun fields.
 
 ## Success Criteria
 
@@ -309,9 +306,10 @@ configuration.
   result budget, peak retained Longrun output remains bounded by the configured
   rolling-buffer limits, the model receives only bounded escaped tails, and no
   Codex hook-output spill file is created.
-- **SC-007**: Across denied filesystem, network, secret-inheritance, and
-  disallowed-profile tests, zero attempts widen permissions or retry with a
-  broader profile.
+- **SC-007**: Across hook executions with present and absent credentials,
+  filesystem/network operations, and varied Codex approval outcomes, Longrun
+  never invokes a second sandbox, adds a permission gate, filters the hook
+  environment, or retries with a broader policy.
 - **SC-008**: Direct terminal/CI runs return the target's exact success or
   nonzero exit status for all supported normal exits; Codex result envelopes
   report the same status even though the receipt stub has already exited.
@@ -329,13 +327,13 @@ configuration.
 
 ## Assumptions
 
-- The user has already trusted the generated Codex command hooks; that
-  installation trust authorizes the adapter to launch the exact captured target
-  under the configured profile without adding another prompt.
+- The user has already trusted the generated Codex command hooks; Codex owns
+  approval and sandbox decisions, while the trusted adapter launches the exact
+  captured target directly in the hook environment.
 - The Codex environment supports synchronous command hooks with a configured
   timeout long enough for the target and cleanup margin.
-- Longrun uses an explicitly configured named sandbox profile; it does not
-  infer transient per-command approval state that hook input does not expose.
+- Longrun does not infer or reproduce transient Codex approval state; it relies
+  on Codex's hook execution boundary and does not add another one.
 - GitHub Actions and Oracle are invoked through their normal CLIs; Longrun
   provides no special CI or Oracle protocol.
 - A wrapped tool may retain its own artifacts; Longrun owns only the ephemeral
@@ -344,5 +342,6 @@ configuration.
   accepts manual rerun and any resulting duplicate side effects.
 - Hard, uncatchable Unix/macOS process death cannot guarantee zero orphaned
   descendants without an external process owner, which is out of scope.
-- The existing Rust command runner and Codex sandbox invocation remain the
-  execution foundation; no second execution backend is introduced.
+- The existing Rust command runner directly executes the target for both
+  terminal/CI and Codex hooks; no second execution backend or sandbox wrapper
+  is introduced.

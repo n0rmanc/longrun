@@ -86,18 +86,15 @@ one final delivery.
 
 ### V. Preserve Security Boundaries
 
-Codex-hook execution MUST NOT gain permissions merely because a hook launches
-it. It MUST use an explicitly configured named Codex sandbox profile and MUST
-fail closed when that profile is unavailable, disallowed, or invalid. Direct
-terminal/CI execution MUST use the shared native process controls and MUST NOT
-require a Codex installation. Network access, workspace-external writes, secret
-inheritance, shell evaluation, and danger-full-access require explicit
-configuration.
+Codex owns command approval and sandbox policy. Longrun MUST NOT add a second
+permission gate or sandbox when the hook launches a target. Direct terminal/CI
+execution MUST use the shared native process controls and MUST NOT require a
+Codex installation. Longrun MUST preserve the target argv, cwd, and inherited
+environment without silently changing them.
 
-Longrun MUST NOT implement a second user approval prompt or automatically
-approve permission escalation. It MUST NOT claim to inherit transient approval
-state that Codex does not expose to hook input. It MUST never widen the
-configured profile between PreToolUse and PostToolUse.
+Longrun MUST NOT implement a second user approval prompt or permission
+escalation. It remains responsible for bounded output, timeout enforcement,
+owned-process cleanup, and one-time same-turn delivery.
 
 Direct argument execution is the default. Compound shell execution MUST be
 explicit in the target argv (for example `/bin/sh -c '...'`); Longrun MUST NOT
@@ -133,7 +130,7 @@ Codex wait adapter:
 3. The receipt stub records the shell-parsed native arguments, arms the
    handoff, emits one opaque marker, and exits without starting the target.
 4. `PostToolUse` validates and atomically claims the handoff, executes the
-   target through the shared sandbox runner, waits locally, and returns one
+   target through the shared direct runner, waits locally, and returns one
    bounded result to the active turn. Direct terminal/CI execution uses the
    same runner without requiring Codex.
 5. The runtime MUST use no supervisor, per-job worker process, durable job
@@ -141,11 +138,11 @@ Codex wait adapter:
    service lifecycle for command execution.
 6. Handoff state MUST be short-lived and protected by the current user's
    filesystem permissions for Codex hook execution. It MUST contain only the
-   origin binding, target arguments, immutable policy snapshot, expiry, and
+   origin binding, target arguments, expiry, and
    one-way claim state.
 7. The shared runner MUST own timeout, cancellation, output draining, and
-   process-tree cleanup. For Codex hooks, `codex sandbox` is the permission
-   boundary, not a Longrun worker.
+   process-tree cleanup. It MUST NOT add a second sandbox or permission
+   boundary.
 8. Codex integration MUST install only the active PreToolUse and PostToolUse
    hooks needed for the wait adapter. It MUST NOT install SessionStart recovery
    hooks or operating-system services.
@@ -216,12 +213,13 @@ Every supported execution path MUST have evidence proving:
    Longrun-owned output log remains after completion.
 6. The target exit code and terminal reason are represented exactly in the
    bounded result envelope.
-7. Codex sandbox denial fails without automatic permission escalation or retry;
-   direct terminal/CI execution does not require a Codex sandbox.
+7. Codex owns approval and sandbox decisions; Longrun does not automatically
+   escalate or retry permissions, and direct terminal/CI execution does not
+   require a Codex installation.
 8. Timeout, cancellation, and handled owner shutdown terminate the owned
    process tree.
-9. Full output is never copied into model context and protected credentials
-   are not exposed.
+9. Full output is never copied into model context. The target inherits the
+   hook environment without Longrun filtering it.
 10. GitHub Actions watch and Oracle browser runs return their final result to
     the active turn without model polling.
 

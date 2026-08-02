@@ -17,7 +17,7 @@ fn codex_hook_waits_for_a_github_actions_run_once() {
     let repo = env::var("LONGRUN_GITHUB_REPO").unwrap_or_else(|_| "n0rmanc/longrun".into());
     let root = hook_support::test_root("github-success");
     let command = format!(
-        "{} --env-pass GH_TOKEN --permission-profile :danger-full-access -- gh run watch {} --repo {} --exit-status",
+        "{} -- gh run watch {} --repo {} --exit-status",
         hook_support::shell_quote(env!("CARGO_BIN_EXE_longrun")),
         run_id.to_string_lossy(),
         repo
@@ -53,7 +53,7 @@ fn codex_hook_returns_github_failure_without_retry() {
     let repo = env::var("LONGRUN_GITHUB_REPO").unwrap_or_else(|_| "n0rmanc/longrun".into());
     let root = hook_support::test_root("github-failure");
     let command = format!(
-        "{} --env-pass GH_TOKEN --permission-profile :danger-full-access -- gh run watch {} --repo {} --exit-status",
+        "{} -- gh run watch {} --repo {} --exit-status",
         hook_support::shell_quote(env!("CARGO_BIN_EXE_longrun")),
         run_id.to_string_lossy(),
         repo
@@ -100,7 +100,7 @@ fn codex_hook_reports_github_auth_failure_without_widening_access() {
         repo
     );
     let command = format!(
-        "{} --permission-profile :danger-full-access -- /bin/sh -c {}",
+        "{} -- /bin/sh -c {}",
         hook_support::shell_quote(env!("CARGO_BIN_EXE_longrun")),
         hook_support::shell_quote(&script)
     );

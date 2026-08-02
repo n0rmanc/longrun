@@ -12,11 +12,11 @@ Replace Longrun's durable job system with one ephemeral, RTK-style command
 proxy. Humans and CI run `longrun PROGRAM ARG...`; Codex can use the same
 surface through `rtk longrun PROGRAM ARG...`. PreToolUse creates a short-lived
 handoff and rewrites the Bash call to a fast marker stub. PostToolUse claims the
-handoff, runs the target through the configured Codex sandbox, waits locally,
-and returns one bounded result to the same active turn. Direct terminal/CI
-execution uses the same runner without requiring Codex. There is no
+handoff, runs the target directly in the hook's inherited environment, waits
+locally, and returns one bounded result to the same active turn. Direct
+terminal/CI execution uses the same runner without requiring Codex. There is no
 supervisor, per-job worker, durable result, recovery, automatic retry, or second
-Longrun approval system.
+Longrun approval, sandbox, or environment-policy system.
 
 The implementation reuses the existing Rust CLI, hook integration, runner,
 output, and platform process-control foundations while deleting the durable
@@ -57,7 +57,8 @@ with cleanup margin.
 
 - No durable supervisor, per-job worker process, recovery, resume, automatic
   retry, or second Codex process.
-- No silent permission widening.
+- Codex owns approval and sandbox policy; Longrun does not add a second gate,
+  sandbox, or environment filter.
 - Direct argument mode must preserve native arguments without shell rebuilding.
 - Target exit status is result data after the receipt stub has already exited.
 - macOS uncatchable owner death is documented best effort.
@@ -81,7 +82,7 @@ workload management.
 | II. CLI Is the Product | PASS | Generic `longrun PROGRAM ARG...` and `rtk longrun PROGRAM ARG...` are canonical. |
 | III. Continue the Same Work | PASS | Only the active PostToolUse turn receives the result; lost ownership requires manual rerun. |
 | IV. One Handoff, One Owned Execution | PASS | Protected `prepared -> armed -> claimed -> deleted` handoff and no automatic retry. |
-| V. Preserve Security Boundaries | PASS | Explicit named sandbox profile, fail-closed policy, no Longrun approval hook or auto escalation. |
+| V. Preserve Security Boundaries | PASS | Codex owns approval and sandbox policy; Longrun directly runs the captured target without a second gate or environment filter. |
 | VI. Keep Context Small and Evidence Local | PASS | Concurrent bounded in-memory tails; no completed Longrun result persistence. |
 | Quality gates | PASS | Format, clippy, locked tests, process, hook, security, live GH, and Oracle evidence are planned. |
 
@@ -103,10 +104,9 @@ Research decisions and source evidence are recorded in
    state.
 4. Tokio `Child::kill_on_drop(true)` helps direct-child cleanup but does not
    replace Unix process groups or Windows Job Objects for descendants.
-5. Explicit named permission profiles are required for Codex-hook execution;
-   hook trust and the immutable profile are the authorization boundary, exact
-   transient Codex approval inheritance is not claimed, and direct terminal/CI
-   execution remains independent of Codex.
+5. Codex owns approval and sandbox policy; Longrun's hook path trusts the
+   installed hook and directly runs the captured target in its inherited
+   environment. Direct terminal/CI execution remains independent of Codex.
 6. GitHub Actions and Oracle remain generic wrapped CLIs, not Longrun protocols.
 
 ## Design
@@ -142,10 +142,10 @@ Use the existing random-byte dependency and standard filesystem operations.
 Avoid HMAC keys, SQLite, UUID job identity, delivery leases, and a second
 receipt schema in the final design.
 
-The handoff record must snapshot the target argv, canonical cwd, the named
-permission profile when the invocation is Codex-integrated, environment policy,
-timeout, termination grace, forced-cleanup margin, result-serialization margin,
-and output limit. A crash after claim is inert and never retried.
+The handoff record must snapshot the target argv, canonical cwd, timeout,
+termination grace, forced-cleanup margin, result-serialization margin, and
+output limit. Codex approval and sandbox policy are not Longrun handoff fields.
+A crash after claim is inert and never retried.
 
 ### Codex hooks
 
@@ -170,7 +170,7 @@ The stub path will:
 
 1. Parse exactly one marker.
 2. Validate session, turn, tool use, cwd, command/stub identity, expiry, and
-   policy snapshot.
+   execution snapshot.
 3. Atomically claim the handoff.
 4. Call the shared runner directly.
 5. Return one bounded result envelope through `PostToolUse`.
@@ -183,12 +183,9 @@ recovery path.
 
 Refactor `src/runner.rs` to be the only target executor:
 
-- for Codex-hook execution, launch `codex sandbox` with the immutable named
-  profile, `--include-managed-config`, and cwd; fail closed if the launcher
-  rejects that option;
-- for direct terminal/CI execution, launch the target with the same native
-  process controls without requiring the Codex executable;
-- clear the environment and apply the explicit allowlist;
+- for both direct terminal/CI and Codex-hook execution, launch the target
+  directly with the same native process controls;
+- preserve the hook/parent environment without clearing or filtering it;
 - call `Child::kill_on_drop(true)` for direct-child cleanup;
 - concurrently drain stdout and stderr into fixed-capacity rolling buffers;
 - track total bytes and truncation without reading complete files back;
@@ -219,7 +216,7 @@ Update `src/platform/windows.rs` to:
 - support graceful console break followed by `TerminateJobObject`;
 - terminate a suspended child if assignment fails.
 
-### Output and policy configuration
+### Output and execution configuration
 
 Simplify `src/config.rs` to keep only:
 
@@ -230,8 +227,6 @@ Simplify `src/config.rs` to keep only:
 - handoff TTL;
 - PostToolUse timeout, validated against the target timeout plus all cleanup and
   serialization margins;
-- named permission profile and explicit danger opt-in for Codex-hook execution;
-- environment pass/deny policy;
 - bounded output limit;
 
 Remove recovery, retry budget, retention, service, delivery lease, and durable
@@ -278,7 +273,8 @@ not replace that acceptance run:
 - exact target exit result;
 - bounded output, injection resistance, and no Codex hook-output spill;
 - no completed persistence;
-- sandbox/environment fail-closed behavior;
+- direct execution in the inherited hook environment without a second sandbox
+  or permission gate;
 - Unix/macOS process tree;
 - Windows Job Object containment;
 - installation/repair;
@@ -310,7 +306,7 @@ specs/002-ephemeral-wait-proxy/
 ```text
 src/
 ├── cli.rs                  # generic target surface and management commands
-├── config.rs               # timeout, profile, environment, output policy
+├── config.rs               # timeout, handoff, and output policy
 ├── handoff.rs              # new ephemeral prepared/armed/claimed state
 ├── hook/
 │   ├── input.rs

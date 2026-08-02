@@ -4,7 +4,7 @@ use longrun::{
     config::Config,
     handoff::{HandoffExpectation, HandoffStore},
     paths::AppPaths,
-    protocol::{EnvironmentPolicy, NativeString, TargetSpec},
+    protocol::{NativeString, TargetSpec},
 };
 use uuid::Uuid;
 
@@ -21,13 +21,11 @@ fn paths(root: &std::path::Path) -> AppPaths {
 
 fn target() -> TargetSpec {
     TargetSpec {
-        protocol_version: 2,
+        protocol_version: 3,
         program: NativeString::from_os_string("/bin/echo".into()),
         args: vec![NativeString::from_os_string("done".into())],
         cwd: NativeString::from_os_string(std::env::current_dir().expect("cwd").into_os_string()),
         timeout_ms: 1_000,
-        permission_profile: ":workspace".into(),
-        environment_policy: EnvironmentPolicy::default(),
         created_at_ms: 100,
         command_hash: "sha256:test".into(),
     }

@@ -19,9 +19,7 @@ use crate::{
     integration::codex,
     metrics,
     paths::AppPaths,
-    protocol::{
-        EnvironmentPolicy, NativeString, ResultEnvelope, TargetSpec, TerminalReason, sha256_hex,
-    },
+    protocol::{NativeString, ResultEnvelope, TargetSpec, TerminalReason, sha256_hex},
     runner::{ExecutionMode, OutputMode, Runner},
 };
 
@@ -37,10 +35,6 @@ pub struct Cli {
     pub config: Option<PathBuf>,
     #[arg(long, global = true, value_name = "DURATION")]
     pub timeout: Option<String>,
-    #[arg(long, global = true, value_name = "NAME")]
-    pub permission_profile: Option<String>,
-    #[arg(long = "env-pass", global = true, value_name = "NAME")]
-    pub env_pass: Vec<String>,
     #[arg(long, global = true)]
     pub json: bool,
     #[command(subcommand)]
@@ -184,8 +178,6 @@ pub async fn dispatch(
     let global_json = cli.json;
     let globals = GlobalsForTarget {
         timeout: cli.timeout,
-        permission_profile: cli.permission_profile,
-        env_pass: cli.env_pass,
     };
     match cli.command {
         Command::Target(words) => {
@@ -327,41 +319,13 @@ pub fn target_from_words_at_cwd(
         .map(parse_duration_ms)
         .transpose()?
         .unwrap_or(config.execution.timeout_ms);
-    let permission_profile = globals
-        .permission_profile
-        .clone()
-        .unwrap_or_else(|| config.execution.permission_profile.clone());
-    if !config.permits_permission_profile(&permission_profile) {
-        return Err(Error::Denied(
-            "danger-full-access requires explicit configuration".into(),
-        ));
-    }
-    let environment_policy = EnvironmentPolicy {
-        pass: config
-            .environment
-            .pass
-            .iter()
-            .chain(globals.env_pass.iter())
-            .cloned()
-            .collect(),
-        deny_patterns: config.environment.deny_patterns.clone(),
-    };
-    let command_hash = sha256_hex(&serde_json::to_vec(&(
-        &program,
-        &args,
-        &cwd,
-        timeout_ms,
-        &permission_profile,
-        &environment_policy,
-    ))?);
+    let command_hash = sha256_hex(&serde_json::to_vec(&(&program, &args, &cwd, timeout_ms))?);
     Ok(TargetSpec {
         protocol_version: crate::protocol::PROTOCOL_VERSION,
         program: NativeString::from_os_string(program),
         args,
         cwd,
         timeout_ms,
-        permission_profile,
-        environment_policy,
         created_at_ms,
         command_hash,
     })
@@ -370,8 +334,6 @@ pub fn target_from_words_at_cwd(
 #[derive(Debug, Clone, Default)]
 pub struct GlobalsForTarget {
     pub timeout: Option<String>,
-    pub permission_profile: Option<String>,
-    pub env_pass: Vec<String>,
 }
 
 async fn execute_target(
@@ -489,8 +451,6 @@ async fn hook(arguments: HookArgs, paths: &AppPaths, config: &Config) -> Result<
 pub fn globals_from_cli(cli: &Cli) -> GlobalsForTarget {
     GlobalsForTarget {
         timeout: cli.timeout.clone(),
-        permission_profile: cli.permission_profile.clone(),
-        env_pass: cli.env_pass.clone(),
     }
 }
 

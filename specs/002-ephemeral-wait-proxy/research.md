@@ -84,31 +84,28 @@ the normal user workflow.
 - In-memory state only: rejected because PreToolUse and PostToolUse are
   separate processes and need a short-lived handoff.
 
-## Decision 4: Execute through the configured Codex sandbox without a second approval
+## Decision 4: Let Codex own approval and sandbox policy
 
-**Decision**: Codex-hook execution must use an explicitly configured named
-permission profile, include managed requirements when the sandbox launcher
-supports them, fail closed if the profile is unavailable or disallowed, and
-never widen it automatically. Direct terminal/CI execution does not require a
-Codex installation. Longrun must not install a PermissionRequest hook or
-present a second approval prompt.
+**Decision**: Codex-hook execution launches the captured target directly
+through the shared runner in the hook's inherited environment. Longrun does
+not invoke `codex sandbox`, add a permission gate, filter variables, or present
+a second approval prompt. Direct terminal/CI execution uses the same runner
+without requiring a Codex installation.
 
 **Rationale**:
 
-- The trusted Codex hook and configured profile are the authorization boundary;
-  Longrun owns only the local wait and process lifecycle and does not claim a
-  separate transient approval for the hidden target.
-- Hook input does not expose enough information to claim exact inheritance of a
-  transient approval decision or every active sandbox rule.
-- The Codex runner must not turn a normal approved wrapper into an implicit
-  `:danger-full-access` execution.
+- Codex already owns the user's command confirmation and sandbox decision.
+- Recreating that decision in Longrun caused a second, conflicting permission
+  model and broke valid `rtk longrun`/Oracle/GitHub invocations.
+- The hook's inherited environment is the simplest truthful execution context;
+  Longrun must not claim to reproduce or improve Codex's transient policy.
 
 **Alternatives considered**:
 
 - Automatically selecting `:danger-full-access` for GitHub and Oracle:
-  rejected because it violates the repository security boundary.
-- Claiming to inherit the exact active Codex permission state: rejected because
-  the hook input contract does not expose that state.
+  rejected because Longrun must not own permission selection.
+- Launching through `codex sandbox` from Longrun: rejected because it adds a
+  second sandbox boundary and changes the command's environment.
 
 ## Decision 5: Bound output in memory and return the target status as data
 
@@ -150,10 +147,8 @@ present a second approval prompt.
 - Context7's Tokio documentation confirms that `Child::kill_on_drop(true)`
   kills the direct child handle when it is dropped; it does not replace
   process-group or Job Object cleanup for descendants.
-- The installed Codex CLI reports `--permission-profile`,
-  `--include-managed-config`, and `--cd` on `codex sandbox`; the plan therefore
-  requires managed-profile resolution and fails closed when the required
-  launcher option is unavailable.
+- The installed Codex CLI's sandbox options are irrelevant to Longrun's
+  execution path; invoking them would create a second policy boundary.
 - The current Codex hooks contract supports synchronous command hooks with an
   explicit timeout; PostToolUse feedback can replace the completed tool result
   and continue the active turn, while asynchronous command hooks are not a
@@ -200,9 +195,9 @@ Longrun-specific GitHub or Oracle protocols.
 - **Target exit code vs receipt exit code**: the plan treats the exact target
   status as model-visible result data and does not promise to mutate the
   already-completed receipt stub status.
-- **Transient permission inheritance**: the plan requires an explicitly
-  configured named profile and documents that exact per-call inheritance is not
-  claimed.
+- **Transient permission inheritance**: Longrun does not attempt to reconstruct
+  Codex's transient permission state; the trusted hook and its inherited
+  environment remain the boundary.
 - **macOS hard death**: the plan guarantees handled and observable cleanup and
   documents the uncatchable-owner limitation.
 - **Old durable state**: the plan makes old jobs inert; repair removes old

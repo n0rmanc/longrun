@@ -2,10 +2,7 @@ use std::{fs, path::Path};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    error::{Error, Result},
-    protocol::default_deny_patterns,
-};
+use crate::error::{Error, Result};
 
 const MAX_TIMEOUT_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
 const DEFAULT_HANDOFF_TTL_MS: u64 = 5 * 60 * 1_000;
@@ -17,7 +14,6 @@ pub struct Config {
     pub execution: ExecutionConfig,
     pub handoff: HandoffConfig,
     pub output: OutputConfig,
-    pub environment: EnvironmentConfig,
     pub diagnostics: DiagnosticsConfig,
 }
 
@@ -41,11 +37,6 @@ impl Config {
         if self.execution.timeout_ms == 0 || self.execution.timeout_ms > MAX_TIMEOUT_MS {
             return Err(Error::Config(
                 "execution.timeout_ms is outside the allowed range".into(),
-            ));
-        }
-        if self.execution.permission_profile.trim().is_empty() {
-            return Err(Error::Config(
-                "execution.permission_profile must not be empty".into(),
             ));
         }
         if self.execution.termination_grace_ms == 0 {
@@ -88,19 +79,12 @@ impl Config {
             .and_then(|value| value.checked_add(self.execution.result_serialization_margin_ms))
             .ok_or_else(|| Error::Config("PostToolUse timeout arithmetic overflowed".into()))
     }
-
-    pub fn permits_permission_profile(&self, profile: &str) -> bool {
-        profile != ":danger-full-access" || self.execution.allow_danger_full_access
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ExecutionConfig {
     pub timeout_ms: u64,
-    pub permission_profile: String,
-    pub allow_danger_full_access: bool,
-    pub include_managed_config: bool,
     pub termination_grace_ms: u64,
     pub forced_cleanup_margin_ms: u64,
     pub result_serialization_margin_ms: u64,
@@ -115,9 +99,6 @@ impl Default for ExecutionConfig {
         let result_serialization_margin_ms = 1_000;
         Self {
             timeout_ms,
-            permission_profile: ":workspace".into(),
-            allow_danger_full_access: false,
-            include_managed_config: true,
             termination_grace_ms,
             forced_cleanup_margin_ms,
             result_serialization_margin_ms,
@@ -155,36 +136,6 @@ impl Default for OutputConfig {
         Self {
             model_max_bytes: 32 * 1024,
             tail_bytes: 64 * 1024,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct EnvironmentConfig {
-    pub pass: Vec<String>,
-    pub deny_patterns: Vec<String>,
-}
-
-impl EnvironmentConfig {
-    pub fn is_protected(&self, name: &str) -> bool {
-        let name = name.to_ascii_uppercase();
-        self.deny_patterns
-            .iter()
-            .map(|pattern| pattern.to_ascii_uppercase())
-            .any(|pattern| name.contains(&pattern))
-    }
-
-    pub fn allows(&self, name: &str) -> bool {
-        self.pass.iter().any(|allowed| allowed == name)
-    }
-}
-
-impl Default for EnvironmentConfig {
-    fn default() -> Self {
-        Self {
-            pass: Vec::new(),
-            deny_patterns: default_deny_patterns(),
         }
     }
 }

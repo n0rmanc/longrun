@@ -33,11 +33,11 @@ job specifications and results; separate append-only stdout/stderr log files;
 OS-specific per-user state and data directories
 
 **Testing**: Rust unit and integration tests, CLI process tests, hook JSON
-fixtures, supervisor IPC tests, process-tree tests, sandbox denial tests,
-cross-platform compile checks, and live Codex hook tests
+fixtures, supervisor IPC tests, process-tree tests, cross-platform compile
+checks, and live Codex hook tests
 
-**Target Platform**: macOS 13+, Linux with Unix-domain sockets and Codex sandbox
-support, Windows 11 with named pipes and Job Objects
+**Target Platform**: macOS 13+, Linux with Unix-domain sockets, Windows 11 with
+named pipes and Job Objects
 
 **Project Type**: Single Rust CLI application with library modules, generated
 Codex plugin assets, and an optional per-user supervisor mode
@@ -67,7 +67,7 @@ retention rather than model context
 | CLI Is the Product | One Rust binary and shared runtime; plugin, hooks, skill, and optional MCP are adapters | PASS |
 | Continue the Same Work | Active execution returns via `PostToolUse`; recovery is ordered and lease-protected | PASS |
 | Run Once, Deliver Safely | Transactional execution/delivery state, one-time receipt, lease, and idempotent recovery | PASS |
-| Preserve Security Boundaries | Real command runs through `codex sandbox -P PROFILE -C CWD -- ...`; no auto-escalation | PASS |
+| Preserve Security Boundaries | Codex owns approval/sandbox policy; Longrun directly waits, bounds output, and cleans up the target process | PASS |
 | Keep Context Small and Evidence Local | Full local logs and a configurable bounded result envelope marked untrusted | PASS |
 | Quality Gates | Format, lint, unit, integration, hook, live, and cross-platform checks are planned | PASS |
 
@@ -223,20 +223,11 @@ independently.
 
 ### Sandboxing and environment
 
-The runner executes the command as:
-
-```text
-codex sandbox -P <permission-profile> -C <cwd> -- <program> <args...>
-```
-
-This matches the installed Codex CLI 0.146.0 interface. Longrun does not use
-the older platform-name subcommand form. The default profile is `:workspace`.
-Danger-full-access requires both configuration permission and an explicit
-per-command request.
-
-The child environment starts from a safe allowlist. Secret-like names are
-removed unless explicitly allowed. Arguments are retained as `OsString`;
-`submit-shell` is a separate explicit interface.
+Codex owns the approval and sandbox policy. Longrun starts the requested
+program directly from the PostToolUse hook with its inherited environment,
+then applies only its timeout, output-bound, process-cleanup, and delivery
+controls. Arguments are retained as `OsString`; `submit-shell` is a separate
+explicit interface.
 
 ### Persistence and output
 
