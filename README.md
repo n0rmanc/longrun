@@ -40,9 +40,14 @@ Re-run the release installer to replace an existing binary:
 curl -fsSL https://raw.githubusercontent.com/n0rmanc/longrun/main/install.sh | sh
 hash -r
 longrun --version
+# Expected: longrun 0.1.8
 longrun init --codex --repair
 longrun doctor --json
 ```
+
+The generic command surface is available in `0.1.8`. If `longrun --help`
+still shows legacy commands such as `submit` or `run`, the old binary is still
+installed; rerun the installer, then run `hash -r` or start a new shell.
 
 For Homebrew:
 
@@ -83,6 +88,8 @@ rtk longrun PROGRAM ARG...
 Examples:
 
 ```sh
+rtk longrun -- /bin/sh -c 'sleep 3; printf "longrun-ok\n"'
+
 rtk longrun gh run watch RUN_ID --repo OWNER/REPO --exit-status
 
 rtk longrun oracle --engine browser --model gpt-5-pro \
