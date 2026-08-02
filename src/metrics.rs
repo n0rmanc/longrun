@@ -273,6 +273,7 @@ pub fn write_human_report(report: &GainReport, output: &mut impl Write) -> std::
 fn write_metric(paths: &AppPaths, metric: &ExecutionMetric) -> Result<()> {
     let directory = metrics_dir(paths);
     fs::create_dir_all(&directory)?;
+    set_private_permissions(&directory, 0o700)?;
 
     let id = Uuid::now_v7().to_string();
     let temporary = directory.join(format!(".{id}.tmp"));
@@ -284,7 +285,10 @@ fn write_metric(paths: &AppPaths, metric: &ExecutionMetric) -> Result<()> {
             .create_new(true)
             .write(true)
             .open(&temporary)?;
+        set_private_permissions(&temporary, 0o600)?;
         file.write_all(&bytes)?;
+        file.sync_all()?;
+        drop(file);
         fs::rename(&temporary, &final_path)?;
         Ok(())
     })();
@@ -313,6 +317,20 @@ fn executable_name(target: &TargetSpec) -> Result<String> {
 
 fn metrics_dir(paths: &AppPaths) -> PathBuf {
     paths.data_dir.join(METRICS_DIR)
+}
+
+fn set_private_permissions(path: &Path, mode: u32) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        fs::set_permissions(path, fs::Permissions::from_mode(mode))?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (path, mode);
+    }
+    Ok(())
 }
 
 fn now_ms() -> Result<i64> {

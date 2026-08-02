@@ -107,7 +107,7 @@ usable.
 ### Tests for User Story 3
 
 - [x] T018 [P] [US3] Add JSON schema/value parity tests for `gain --json` and global `--json` in `tests/cli.rs`
-- [x] T019 [US3] Add clear-scope and ordering tests proving `gain --clear` does not execute or stop a target, preserves a metric published after clear completes, and leaves configuration, handoff, and integration paths unchanged in `tests/cli.rs` and `tests/hooks.rs`
+- [x] T019 [US3] Add clear-scope and ordering tests proving `gain --clear` does not execute or stop a target, preserves a metric published after clear completes, and leaves configuration, handoff, and integration paths unchanged in `tests/cli.rs` and `tests/metrics.rs`
 
 ### Implementation for User Story 3
 
@@ -127,8 +127,8 @@ repository gates.
 - [x] T022 [P] Update `README.md` with `longrun gain`, `--json`, `--clear`, management-command collision, the no-token-estimate boundary, and the feature quickstart link
 - [x] T023 [P] Validate the end-to-end scenarios in `specs/003-execution-metrics/quickstart.md`
 - [x] T024 [P] Add a 10,000-record aggregation performance check for the stated scan goal in `tests/metrics.rs`
-- [ ] T025 Run `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and `cargo test --locked` against `Cargo.toml`, `src/`, and `tests/`
-- [ ] T026 Review implementation evidence against the constitution gates and update `specs/003-execution-metrics/plan.md` if any design or verification claim is no longer true
+- [x] T025 Run `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and `cargo test --locked` against `Cargo.toml`, `src/`, and `tests/`
+- [x] T026 Review implementation evidence against the constitution gates and update `specs/003-execution-metrics/plan.md` if any design or verification claim is no longer true
 
 ---
 

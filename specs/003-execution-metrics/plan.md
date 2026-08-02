@@ -262,11 +262,12 @@ architecture is added.
 | Management/target collision | CLI and hook tests keep `longrun gain` as management and require `longrun -- gain` for an external target. |
 | Global totals and minutes | Aggregation test verifies count, total milliseconds, average, and human formatting. |
 | Outcome counts | Classification tests cover completed, failed, timed out, cancelled, and owner shutdown, and assert the counts sum to the total. |
-| Per-program breakdown | Tests use multiple argument lists and verify basename grouping without arguments in output. |
+| Per-program breakdown | Metrics tests cover three executable basenames, repeated names with different arguments, deterministic sorting, and count/duration invariants without storing arguments. |
 | JSON contract | CLI test parses `gain --json` and compares values with human report semantics. |
-| Clear scope | Integration test verifies metrics reset while config/handoff/integration paths remain. |
+| Clear scope | Metrics and CLI tests verify metrics reset while configuration, handoff, and Codex integration paths remain usable. |
 | Privacy | Serialized record/output assertions prove no args, output, cwd, prompt, credentials, or request body fields. |
-| Concurrency and invalid data | Metrics tests publish distinct records concurrently and ignore incomplete/invalid files. |
+| Concurrency and invalid data | Metrics tests publish 32 records concurrently, verify one valid record per publication, and ignore incomplete/invalid files. |
+| Metric storage permissions | Unix tests verify the metrics directory is `0700` and each record is `0600`; other platforms retain the existing private data-root boundary. |
 | Performance | A 10,000-record aggregation check verifies the report meets the stated local scan goal. |
 | No token claim | Contract, README, and JSON assertions contain no savings/request estimate field. |
 | No model polling or new worker | Source review plus existing lifecycle tests show only post-terminal local writes. |

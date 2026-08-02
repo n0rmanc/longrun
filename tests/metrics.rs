@@ -143,6 +143,7 @@ fn clear_removes_metrics_only() {
     paths.ensure_private_state().expect("state");
     fs::write(paths.config_dir.join("config.toml"), b"[execution]\n").expect("config");
     fs::write(paths.handoff_dir.join("keep"), b"handoff").expect("handoff");
+    fs::write(paths.integration_dir.join("keep"), b"integration").expect("integration");
 
     metrics::record(
         &paths,
@@ -161,6 +162,7 @@ fn clear_removes_metrics_only() {
     );
     assert!(paths.config_dir.join("config.toml").exists());
     assert!(paths.handoff_dir.join("keep").exists());
+    assert!(paths.integration_dir.join("keep").exists());
 
     metrics::record(
         &paths,
@@ -189,6 +191,7 @@ fn groups_programs_by_basename_and_sorts_summaries() {
         ("/usr/bin/gh", &["run"][..], 300),
         ("/opt/tools/gh", &["pr", "view"][..], 500),
         ("/usr/bin/cargo", &["test"][..], 700),
+        ("/usr/local/bin/oracle", &["--engine", "browser"][..], 900),
     ] {
         metrics::record(
             &paths,
@@ -206,11 +209,12 @@ fn groups_programs_by_basename_and_sorts_summaries() {
             .iter()
             .map(|summary| summary.program.as_str())
             .collect::<Vec<_>>(),
-        ["cargo", "gh"]
+        ["cargo", "gh", "oracle"]
     );
     assert_eq!(report.by_program[0].count, 1);
     assert_eq!(report.by_program[1].count, 2);
     assert_eq!(report.by_program[1].total_duration_ms, 800);
+    assert_eq!(report.by_program[2].count, 1);
     assert_eq!(
         report
             .by_program
@@ -218,6 +222,80 @@ fn groups_programs_by_basename_and_sorts_summaries() {
             .map(|summary| summary.count)
             .sum::<u64>(),
         report.recorded_executions
+    );
+
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn concurrent_records_publish_one_valid_metric_each() {
+    let root = root();
+    let paths = paths(&root);
+    paths.ensure_private_state().expect("state");
+    let target = target("/usr/bin/true", &[]);
+    let result = result(TerminalReason::Exited, Some(0), 42);
+
+    let handles = (0..32)
+        .map(|_| {
+            let paths = paths.clone();
+            let target = target.clone();
+            let result = result.clone();
+            std::thread::spawn(move || {
+                metrics::record(&paths, &target, ExecutionMode::Direct, &result)
+                    .expect("record concurrent metric");
+            })
+        })
+        .collect::<Vec<_>>();
+    for handle in handles {
+        handle.join().expect("join concurrent recorder");
+    }
+
+    let report = metrics::read_report(&paths).expect("read concurrent report");
+    assert_eq!(report.recorded_executions, 32);
+    assert_eq!(report.outcomes.completed, 32);
+    assert_eq!(report.by_program[0].count, 32);
+
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[cfg(unix)]
+#[test]
+fn metric_storage_is_private() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = root();
+    let paths = paths(&root);
+    paths.ensure_private_state().expect("state");
+    metrics::record(
+        &paths,
+        &target("/usr/bin/true", &[]),
+        ExecutionMode::Direct,
+        &result(TerminalReason::Exited, Some(0), 1),
+    )
+    .expect("record private metric");
+
+    let metrics_dir = paths.data_dir.join("metrics");
+    assert_eq!(
+        fs::metadata(&metrics_dir)
+            .expect("metrics directory metadata")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o700
+    );
+    let record = fs::read_dir(&metrics_dir)
+        .expect("metrics records")
+        .next()
+        .expect("record entry")
+        .expect("record");
+    assert_eq!(
+        record
+            .metadata()
+            .expect("record metadata")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o600
     );
 
     fs::remove_dir_all(root).expect("cleanup");
