@@ -40,12 +40,12 @@ Re-run the release installer to replace an existing binary:
 curl -fsSL https://raw.githubusercontent.com/n0rmanc/longrun/main/install.sh | sh
 hash -r
 longrun --version
-# Expected: longrun 0.1.9
+# Expected: longrun 0.2.0
 longrun init --codex --repair
 longrun doctor --json
 ```
 
-The generic command surface is available in `0.1.9`. If `longrun --help`
+The generic command surface is available in `0.2.0`. If `longrun --help`
 still shows legacy commands such as `submit` or `run`, the old binary is still
 installed; rerun the installer, then run `hash -r` or start a new shell.
 
