@@ -1,12 +1,12 @@
 #[cfg(unix)]
 mod unix {
-    use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf};
+    use std::fs;
 
     use base64::Engine;
     use longrun::{
         config::Config,
         paths::AppPaths,
-        protocol::{EnvironmentPolicy, NativeString, TargetSpec, TerminalReason},
+        protocol::{NativeString, TargetSpec, TerminalReason},
         runner::{ExecutionMode, OutputMode, Runner},
     };
     use uuid::Uuid;
@@ -22,20 +22,9 @@ mod unix {
         }
     }
 
-    fn fake_codex(root: &std::path::Path) -> PathBuf {
-        let path = root.join("codex");
-        fs::write(
-            &path,
-            "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$(dirname \"$0\")/sandbox.args\"\nwhile [ \"$1\" != \"--\" ]; do shift; done\nshift\nexec \"$@\"\n",
-        )
-        .expect("write fake sandbox");
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).expect("make executable");
-        path
-    }
-
     fn target(script: &str) -> TargetSpec {
         TargetSpec {
-            protocol_version: 2,
+            protocol_version: 3,
             program: NativeString::from_os_string("/bin/sh".into()),
             args: vec![
                 NativeString::from_os_string("-c".into()),
@@ -45,20 +34,18 @@ mod unix {
                 std::env::current_dir().expect("cwd").into_os_string(),
             ),
             timeout_ms: 1_000,
-            permission_profile: ":workspace".into(),
-            environment_policy: EnvironmentPolicy::default(),
             created_at_ms: 1,
             command_hash: "sha256:test".into(),
         }
     }
 
     #[tokio::test]
-    async fn hook_runner_uses_the_named_codex_profile_and_keeps_bounded_output_in_memory() {
+    async fn hook_runner_executes_directly_and_keeps_bounded_output_in_memory() {
         let root = std::env::temp_dir().join(format!("longrun-runner-{}", Uuid::now_v7()));
         fs::create_dir_all(&root).expect("root");
         let paths = paths(&root);
         paths.ensure_private_state().expect("state");
-        let result = Runner::with_sandbox_binary(fake_codex(&root))
+        let result = Runner::new()
             .execute(
                 &target("printf out; printf err >&2; exit 7"),
                 &Config::default(),
@@ -82,12 +69,6 @@ mod unix {
                 .decode(result.stderr.tail_base64url)
                 .expect("stderr"),
             b"err"
-        );
-        assert!(
-            fs::read_to_string(root.join("sandbox.args"))
-                .expect("sandbox invocation")
-                .lines()
-                .any(|line| line == "--include-managed-config")
         );
         assert!(
             fs::read_dir(&paths.handoff_dir)

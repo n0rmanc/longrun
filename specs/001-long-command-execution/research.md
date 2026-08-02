@@ -1,5 +1,9 @@
 # Research: Long-Running Command Execution
 
+> Historical research. Decisions about Longrun-owned sandboxing, environment
+> filtering, workers, and durable recovery are superseded by the direct
+> Codex-hook execution boundary documented in `specs/002-ephemeral-wait-proxy/`.
+
 ## Decision 1: Use synchronous Codex hooks for active-session continuation
 
 **Decision**: Match Codex `Bash` calls with `PreToolUse` and `PostToolUse`.

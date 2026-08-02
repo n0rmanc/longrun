@@ -7,8 +7,8 @@ This guide validates the feature from source after implementation.
 - Rust 1.88 or newer.
 - For Codex-hook tests, a trusted Codex installation with the Longrun
   PreToolUse and PostToolUse hooks installed.
-- For Codex-hook tests, a configured named Codex permission profile that
-  permits the test command. Direct terminal/CI tests do not require Codex.
+- Codex remains responsible for approving the command and applying its own
+  sandbox policy. Longrun does not require or configure a second profile.
 - `gh` authentication for the live GitHub Actions check.
 - A pre-authenticated Oracle browser profile for the live Oracle check.
 
@@ -23,7 +23,9 @@ cargo test --locked
 ```
 
 Expected result: all checks pass and the new runtime creates no durable
-supervisor, worker, IPC, SessionStart recovery, or runtime SQLite state.
+supervisor, worker, IPC, SessionStart recovery, or runtime SQLite state. The
+Codex hook path launches the target directly in the inherited hook environment;
+Longrun does not invoke a second sandbox or filter variables.
 
 ## Direct terminal validation
 
@@ -120,8 +122,8 @@ The test suite must cover:
 - duplicate, forged, expired, mismatched, and malformed handoffs;
 - no completed Longrun state after success, failure, timeout, cancellation, or
   lost delivery;
-- environment secret filtering and explicit authentication-variable passing;
-- denied filesystem/network access without profile widening;
+- inherited hook environment with no Longrun filtering or second permission
+  boundary;
 - bounded hook output with `additionalContextLimit: 0` and no Codex spill file;
 - PostToolUse timeout arithmetic covering target, termination, forced-cleanup,
   and serialization margins;

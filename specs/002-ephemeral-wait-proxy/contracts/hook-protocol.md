@@ -7,7 +7,7 @@ Input: Codex Bash hook JSON with session, turn, tool-use, cwd, and command.
 For an exact supported Longrun form, the hook:
 
 1. Validates direct argument grammar and rejects unsupported shell composition.
-2. Captures the immutable target and permission/output policy.
+2. Captures the immutable target and execution/output limits.
 3. Creates a protected `prepared` handoff with a short expiry.
 4. Returns an `updatedInput` command for the fast internal receipt stub.
 
@@ -45,10 +45,14 @@ The hook accepts only one matching marker and validates:
 - expiry;
 - protected handoff state.
 
-It atomically changes `armed` to `claimed`, launches the target through the
-configured Codex sandbox, waits locally, and returns one bounded
+It atomically changes `armed` to `claimed`, launches the target directly
+through the shared runner in the hook's inherited environment, waits locally,
+and returns one bounded
 `PostToolUse` result to the active turn. A nonzero target exit is result data,
 not an automatic hook retry.
+
+Codex owns approval and sandbox policy. Longrun does not add a second
+permission gate, invoke `codex sandbox`, or filter the target environment.
 
 The installed PostToolUse timeout MUST satisfy:
 

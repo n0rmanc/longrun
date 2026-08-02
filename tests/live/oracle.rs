@@ -15,7 +15,7 @@ fn codex_hook_runs_one_oracle_browser_review() {
         .unwrap_or_else(|_| "/Users/norman/.oracle/browser-profile".into());
     let root = hook_support::test_root("oracle-success");
     let command = format!(
-        "{} --permission-profile :danger-full-access -- oracle --engine browser --browser-manual-login --browser-manual-login-profile-dir {} --browser-keep-browser --model gpt-5-pro -p 'Reply exactly LONGRUN_ORACLE_HOOK_OK'",
+        "{} -- oracle --engine browser --browser-manual-login --browser-manual-login-profile-dir {} --browser-keep-browser --model gpt-5-pro -p 'Reply exactly LONGRUN_ORACLE_HOOK_OK'",
         hook_support::shell_quote(env!("CARGO_BIN_EXE_longrun")),
         hook_support::shell_quote(&profile)
     );
@@ -45,7 +45,7 @@ fn codex_hook_returns_oracle_failure_without_reattachment() {
         .unwrap_or_else(|_| "/Users/norman/.oracle/browser-profile".into());
     let root = hook_support::test_root("oracle-failure");
     let command = format!(
-        "{} --permission-profile :danger-full-access -- oracle --engine browser --browser-manual-login --browser-manual-login-profile-dir {} --model gpt-5-pro --file /definitely/missing/longrun-file",
+        "{} -- oracle --engine browser --browser-manual-login --browser-manual-login-profile-dir {} --model gpt-5-pro --file /definitely/missing/longrun-file",
         hook_support::shell_quote(env!("CARGO_BIN_EXE_longrun")),
         hook_support::shell_quote(&profile)
     );

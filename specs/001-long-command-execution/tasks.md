@@ -5,6 +5,10 @@ description: "Implementation tasks for Longrun"
 
 # Tasks: Long-Running Command Execution
 
+> Historical task ledger. Tasks describing Longrun-owned sandbox, environment
+> policy, workers, or durable recovery are superseded by the ephemeral direct
+> runner in `specs/002-ephemeral-wait-proxy/` and constitution 4.0.1.
+
 **Input**: Design documents from
 `/specs/001-long-command-execution/`
 

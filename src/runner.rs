@@ -1,4 +1,4 @@
-use std::{ffi::OsString, process::Stdio};
+use std::process::Stdio;
 
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
@@ -27,20 +27,12 @@ pub enum OutputMode {
     Capture,
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct Runner {
-    sandbox_binary: Option<OsString>,
-}
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Runner;
 
 impl Runner {
     pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn with_sandbox_binary(binary: impl Into<OsString>) -> Self {
-        Self {
-            sandbox_binary: Some(binary.into()),
-        }
+        Self
     }
 
     pub async fn execute(
@@ -48,7 +40,7 @@ impl Runner {
         target: &TargetSpec,
         config: &Config,
         _paths: &AppPaths,
-        mode: ExecutionMode,
+        _mode: ExecutionMode,
         output_mode: OutputMode,
     ) -> Result<ResultEnvelope> {
         let cwd = target.cwd.to_os_string()?;
@@ -59,52 +51,14 @@ impl Runner {
             .map(|argument| argument.to_os_string())
             .collect::<Result<Vec<_>>>()?;
 
-        let (program, args, launcher) = match mode {
-            ExecutionMode::Direct => (program, args, None),
-            ExecutionMode::CodexHook => {
-                if !config.permits_permission_profile(&target.permission_profile) {
-                    return Err(Error::Denied(format!(
-                        "permission profile `{}` is not enabled in Longrun configuration",
-                        target.permission_profile
-                    )));
-                }
-                let sandbox = self
-                    .sandbox_binary
-                    .clone()
-                    .unwrap_or_else(|| OsString::from("codex"));
-                let mut sandbox_args = vec![
-                    OsString::from("sandbox"),
-                    OsString::from("-P"),
-                    target.permission_profile.clone().into(),
-                ];
-                if config.execution.include_managed_config {
-                    sandbox_args.push("--include-managed-config".into());
-                }
-                sandbox_args.extend([
-                    OsString::from("-C"),
-                    cwd.clone(),
-                    OsString::from("--"),
-                    program,
-                ]);
-                sandbox_args.extend(args);
-                (sandbox, sandbox_args, Some(true))
-            }
-        };
-
         let mut command = Command::new(&program);
         command
             .args(&args)
             .current_dir(&cwd)
-            .env_clear()
             .kill_on_drop(true)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        if launcher.is_some() {
-            // `program` is the Codex launcher in this branch; target argv is
-            // already stored in `args`.
-        }
-        copy_safe_environment(&mut command, &target.environment_policy);
         platform::configure_command(&mut command)?;
         let started = Instant::now();
         let mut child = command.spawn()?;
@@ -219,21 +173,6 @@ where
         }
     }
     Ok(rolling.finish())
-}
-
-fn copy_safe_environment(command: &mut Command, policy: &crate::protocol::EnvironmentPolicy) {
-    for name in ["PATH", "HOME", "TMPDIR", "SYSTEMROOT", "WINDIR", "COMSPEC"] {
-        if let Some(value) = std::env::var_os(name) {
-            command.env(name, value);
-        }
-    }
-    for name in &policy.pass {
-        if (!policy.is_protected(name) || policy.allows(name))
-            && let Some(value) = std::env::var_os(name)
-        {
-            command.env(name, value);
-        }
-    }
 }
 
 fn signal_name(status: std::process::ExitStatus) -> Option<String> {

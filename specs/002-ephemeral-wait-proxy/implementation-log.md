@@ -1,5 +1,10 @@
 # Implementation Log: Ephemeral RTK-Style Wait Proxy
 
+> The current architecture is: Codex owns approval and sandbox policy;
+> Longrun owns only the ephemeral handoff, direct process wait, bounded output,
+> timeout, cleanup, and same-turn delivery. Earlier sandbox/environment-policy
+> entries in this append-only log are historical and superseded.
+
 ## Migration inventory
 
 | Existing surface | New surface | Action |

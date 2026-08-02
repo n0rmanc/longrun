@@ -20,8 +20,7 @@ const ACCEPTANCE_DURATION_SECONDS: u64 = 30 * 60;
 fn active_hook_waits_once_and_delivers_to_the_same_turn() {
     let duration_seconds = configured_duration_seconds();
     let root = std::env::temp_dir().join(format!("longrun-active-{}", Uuid::now_v7()));
-    fs::create_dir_all(root.join("bin")).expect("root");
-    let sandbox_log = root.join("sandbox.log");
+    fs::create_dir_all(&root).expect("root");
     let starts = root.join("starts.log");
     let fixture = root.join("active-command");
     fs::write(
@@ -30,17 +29,6 @@ fn active_hook_waits_once_and_delivers_to_the_same_turn() {
     )
     .expect("fixture");
     fs::set_permissions(&fixture, fs::Permissions::from_mode(0o755)).expect("fixture mode");
-    let codex = root.join("bin/codex");
-    fs::write(
-        &codex,
-        format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nwhile [ \"$1\" != \"--\" ]; do shift; done\nshift\nexec \"$@\"\n",
-            shell_quote_path(&sandbox_log)
-        ),
-    )
-    .expect("sandbox");
-    fs::set_permissions(&codex, fs::Permissions::from_mode(0o755)).expect("sandbox mode");
-
     let cwd = std::env::current_dir().expect("cwd");
     let pre = json!({
         "session_id": "active-session",
@@ -75,7 +63,7 @@ fn active_hook_waits_once_and_delivers_to_the_same_turn() {
         .arg(rewritten)
         .current_dir(&cwd)
         .env("HOME", root.join("home"))
-        .env("PATH", command_path(&root))
+        .env("PATH", std::env::var("PATH").expect("PATH"))
         .output()
         .expect("run rewritten receipt");
     assert!(receipt.status.success(), "receipt failed: {receipt:?}");
@@ -105,15 +93,6 @@ fn active_hook_waits_once_and_delivers_to_the_same_turn() {
         "PostToolUse returned before the target command finished"
     );
     assert_eq!(fs::read_to_string(&starts).expect("start count"), "x");
-    assert_eq!(
-        fs::read_to_string(&sandbox_log)
-            .expect("sandbox log")
-            .lines()
-            .count(),
-        1,
-        "Longrun must make one sandbox invocation, not poll through a second execution path"
-    );
-
     let output = json_output(&post);
     assert_eq!(output["continue"], false);
     let context = output["hookSpecificOutput"]["additionalContext"]
@@ -141,20 +120,12 @@ fn configured_duration_seconds() -> u64 {
     }
 }
 
-fn command_path(root: &std::path::Path) -> String {
-    format!(
-        "{}:{}",
-        root.join("bin").display(),
-        std::env::var("PATH").expect("PATH")
-    )
-}
-
 fn run_hook(root: &std::path::Path, hook: &str, input: &Value) -> std::process::Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_longrun"))
         .args(["hook", "codex", hook])
         .current_dir(std::env::current_dir().expect("cwd"))
         .env("HOME", root.join("home"))
-        .env("PATH", command_path(root))
+        .env("PATH", std::env::var("PATH").expect("PATH"))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -181,10 +152,6 @@ fn bounded_stdout(context: &str) -> Vec<u8> {
         .and_then(|value| value.split("\n\n").next())
         .expect("stdout tail");
     URL_SAFE_NO_PAD.decode(encoded).expect("base64 stdout")
-}
-
-fn shell_quote_path(path: &std::path::Path) -> String {
-    path.display().to_string().replace('\'', "'\"'\"'")
 }
 
 #[test]

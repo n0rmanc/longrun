@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 
 use crate::error::{Error, Result};
 
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -142,45 +142,6 @@ fn native_to_os_string(value: &NativeString) -> Result<OsString> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct EnvironmentPolicy {
-    #[serde(default)]
-    pub pass: Vec<String>,
-    #[serde(default = "default_deny_patterns")]
-    pub deny_patterns: Vec<String>,
-}
-
-impl Default for EnvironmentPolicy {
-    fn default() -> Self {
-        Self {
-            pass: Vec::new(),
-            deny_patterns: default_deny_patterns(),
-        }
-    }
-}
-
-impl EnvironmentPolicy {
-    pub fn is_protected(&self, name: &str) -> bool {
-        let name = name.to_ascii_uppercase();
-        self.deny_patterns
-            .iter()
-            .map(|pattern| pattern.to_ascii_uppercase())
-            .any(|pattern| name.contains(&pattern))
-    }
-
-    pub fn allows(&self, name: &str) -> bool {
-        self.pass.iter().any(|allowed| allowed == name)
-    }
-}
-
-pub fn default_deny_patterns() -> Vec<String> {
-    ["SECRET", "TOKEN", "PASSWORD", "API_KEY", "PRIVATE_KEY"]
-        .into_iter()
-        .map(str::to_owned)
-        .collect()
-}
-
 pub fn sha256_hex(input: &[u8]) -> String {
     format!("sha256:{:x}", Sha256::digest(input))
 }
@@ -193,8 +154,6 @@ pub struct TargetSpec {
     pub args: Vec<NativeString>,
     pub cwd: NativeString,
     pub timeout_ms: u64,
-    pub permission_profile: String,
-    pub environment_policy: EnvironmentPolicy,
     pub created_at_ms: i64,
     pub command_hash: String,
 }

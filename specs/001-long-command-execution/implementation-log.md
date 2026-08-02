@@ -1,5 +1,10 @@
 # Implementation Evidence: Longrun
 
+> Historical record. The earlier sandbox, environment-policy, worker, and
+> durable-execution decisions in this append-only log are superseded by
+> `specs/002-ephemeral-wait-proxy/` and constitution 4.0.1. Do not use them as
+> the current runtime contract.
+
 This log records the exact focused checks, live scenarios, review notes, and
 commits required by the constitution.
 

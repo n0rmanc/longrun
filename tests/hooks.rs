@@ -1,10 +1,6 @@
 #![cfg(unix)]
 
-use std::{
-    fs,
-    os::unix::fs::PermissionsExt,
-    path::{Path, PathBuf},
-};
+use std::{fs, path::Path};
 
 use longrun::{
     config::Config,
@@ -44,17 +40,6 @@ fn common(event: &str, cwd: &Path) -> CodexCommonInput {
         model: "gpt-test".into(),
         permission_mode: "workspace-write".into(),
     }
-}
-
-fn fake_codex(root: &Path) -> PathBuf {
-    let path = root.join("codex");
-    fs::write(
-        &path,
-        "#!/bin/sh\nprintf x >> \"$(dirname \"$0\")/starts\"\nwhile [ \"$1\" != \"--\" ]; do shift; done\nshift\nexec \"$@\"\n",
-    )
-    .expect("fake codex");
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).expect("fake codex mode");
-    path
 }
 
 #[test]
@@ -226,7 +211,7 @@ async fn post_tool_use_claims_once_waits_and_returns_same_turn_result() {
     let root = std::env::temp_dir().join(format!("longrun-post-{}", Uuid::now_v7()));
     let paths = paths(&root);
     paths.ensure_private_state().expect("state");
-    let sandbox = fake_codex(&root);
+    let starts = root.join("starts");
     let executable = std::env::current_exe().expect("executable");
     let created_at_ms = now_ms().expect("time");
     let pre = PreToolUseInput {
@@ -234,7 +219,13 @@ async fn post_tool_use_claims_once_waits_and_returns_same_turn_result() {
         turn_id: "turn".into(),
         tool_use_id: "tool".into(),
         tool_name: "Bash".into(),
-        tool_input: json!({"command": format!("{} -- /bin/echo done", executable.display())}),
+        tool_input: json!({
+            "command": format!(
+                "{} -- /bin/sh -c 'printf x >> {}'",
+                executable.display(),
+                starts.display()
+            )
+        }),
     };
     let pre_output =
         handle_pre_tool_use(&pre, &executable, &paths, &Config::default(), created_at_ms)
@@ -263,7 +254,7 @@ async fn post_tool_use_claims_once_waits_and_returns_same_turn_result() {
         tool_input: json!({"command": rewritten}),
         tool_response: json!({"output": receipt}),
     };
-    let runner = Runner::with_sandbox_binary(sandbox);
+    let runner = Runner::new();
     let output = handle_post_tool_use(&post, &paths, &Config::default(), &runner)
         .await
         .expect("post")
@@ -282,7 +273,7 @@ async fn post_tool_use_claims_once_waits_and_returns_same_turn_result() {
             .expect("duplicate")
             .is_none()
     );
-    assert_eq!(fs::read_to_string(root.join("starts")).expect("start"), "x");
+    assert_eq!(fs::read_to_string(&starts).expect("start"), "x");
     assert_eq!(
         metrics::read_report(&paths)
             .expect("metrics")
@@ -297,7 +288,6 @@ async fn post_tool_use_records_timeout_without_duplicate_execution() {
     let root = std::env::temp_dir().join(format!("longrun-post-timeout-{}", Uuid::now_v7()));
     let paths = paths(&root);
     paths.ensure_private_state().expect("state");
-    let sandbox = fake_codex(&root);
     let executable = std::env::current_exe().expect("executable");
     let cwd = std::env::current_dir().expect("cwd");
     let created_at_ms = now_ms().expect("time");
@@ -340,15 +330,10 @@ async fn post_tool_use_records_timeout_without_duplicate_execution() {
         tool_response: json!({"output": receipt}),
     };
 
-    let output = handle_post_tool_use(
-        &post,
-        &paths,
-        &Config::default(),
-        &Runner::with_sandbox_binary(sandbox),
-    )
-    .await
-    .expect("post")
-    .expect("post output");
+    let output = handle_post_tool_use(&post, &paths, &Config::default(), &Runner::new())
+        .await
+        .expect("post")
+        .expect("post output");
     assert!(
         output
             .hook_specific_output
@@ -424,7 +409,7 @@ async fn manual_rerun_uses_a_new_handoff_and_starts_once_again() {
     let root = std::env::temp_dir().join(format!("longrun-rerun-{}", Uuid::now_v7()));
     let paths = paths(&root);
     paths.ensure_private_state().expect("state");
-    let sandbox = fake_codex(&root);
+    let starts = root.join("starts");
     let executable = std::env::current_exe().expect("executable");
     let cwd = std::env::current_dir().expect("cwd");
 
@@ -436,7 +421,11 @@ async fn manual_rerun_uses_a_new_handoff_and_starts_once_again() {
             tool_use_id: tool.into(),
             tool_name: "Bash".into(),
             tool_input: json!({
-                "command": format!("{} -- /bin/sh -c 'exit 0'", executable.display())
+                "command": format!(
+                    "{} -- /bin/sh -c 'printf x >> {}'",
+                    executable.display(),
+                    starts.display()
+                )
             }),
         };
         let output =
@@ -466,15 +455,10 @@ async fn manual_rerun_uses_a_new_handoff_and_starts_once_again() {
             tool_input: json!({"command": rewritten}),
             tool_response: json!({"output": receipt}),
         };
-        let output = handle_post_tool_use(
-            &post,
-            &paths,
-            &Config::default(),
-            &Runner::with_sandbox_binary(&sandbox),
-        )
-        .await
-        .expect("post")
-        .expect("post output");
+        let output = handle_post_tool_use(&post, &paths, &Config::default(), &Runner::new())
+            .await
+            .expect("post")
+            .expect("post output");
         assert!(
             output
                 .hook_specific_output
@@ -483,10 +467,7 @@ async fn manual_rerun_uses_a_new_handoff_and_starts_once_again() {
         );
     }
 
-    assert_eq!(
-        fs::read_to_string(root.join("starts")).expect("starts"),
-        "xx"
-    );
+    assert_eq!(fs::read_to_string(&starts).expect("starts"), "xx");
     assert!(
         fs::read_dir(&paths.handoff_dir)
             .expect("handoff dir")
@@ -501,7 +482,7 @@ async fn discarded_completion_is_not_recovered_and_requires_manual_rerun() {
     let root = std::env::temp_dir().join(format!("longrun-lost-delivery-{}", Uuid::now_v7()));
     let paths = paths(&root);
     paths.ensure_private_state().expect("state");
-    let sandbox = fake_codex(&root);
+    let starts = root.join("starts");
     let executable = std::env::current_exe().expect("executable");
     let cwd = std::env::current_dir().expect("cwd");
     let created_at_ms = now_ms().expect("time");
@@ -510,7 +491,13 @@ async fn discarded_completion_is_not_recovered_and_requires_manual_rerun() {
         turn_id: "turn".into(),
         tool_use_id: "tool".into(),
         tool_name: "Bash".into(),
-        tool_input: json!({"command": format!("{} -- /bin/echo lost", executable.display())}),
+        tool_input: json!({
+            "command": format!(
+                "{} -- /bin/sh -c 'printf x >> {}'",
+                executable.display(),
+                starts.display()
+            )
+        }),
     };
     let pre_output =
         handle_pre_tool_use(&pre, &executable, &paths, &Config::default(), created_at_ms)
@@ -539,14 +526,9 @@ async fn discarded_completion_is_not_recovered_and_requires_manual_rerun() {
         tool_response: json!({"output": receipt}),
     };
 
-    let _discarded = handle_post_tool_use(
-        &post,
-        &paths,
-        &Config::default(),
-        &Runner::with_sandbox_binary(&sandbox),
-    )
-    .await
-    .expect("post");
+    let _discarded = handle_post_tool_use(&post, &paths, &Config::default(), &Runner::new())
+        .await
+        .expect("post");
 
     assert!(
         fs::read_dir(&paths.handoff_dir)
@@ -557,7 +539,7 @@ async fn discarded_completion_is_not_recovered_and_requires_manual_rerun() {
     assert!(!paths.state_dir.join("longrun.sqlite").exists());
     assert!(!paths.data_dir.join("results").exists());
     assert!(!paths.data_dir.join("logs").exists());
-    assert_eq!(fs::read_to_string(root.join("starts")).expect("start"), "x");
+    assert_eq!(fs::read_to_string(&starts).expect("start"), "x");
     fs::remove_dir_all(root).expect("cleanup");
 }
 

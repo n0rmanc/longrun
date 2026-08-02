@@ -140,7 +140,7 @@ fn parse_target_options(words: &mut Vec<OsString>) -> Result<(GlobalsForTarget, 
             words.remove(index);
             continue;
         }
-        if value == "--timeout" || value == "--permission-profile" || value == "--env-pass" {
+        if value == "--timeout" {
             let option = value.into_owned();
             let next = words
                 .get(index + 1)
@@ -148,26 +148,11 @@ fn parse_target_options(words: &mut Vec<OsString>) -> Result<(GlobalsForTarget, 
                 .ok_or_else(|| Error::InvalidInput(format!("{option} requires a value")))?;
             words.drain(index..=index + 1);
             let next = next.to_string_lossy().into_owned();
-            match option.as_str() {
-                "--timeout" => globals.timeout = Some(next),
-                "--permission-profile" => globals.permission_profile = Some(next),
-                "--env-pass" => globals.env_pass.push(next),
-                _ => unreachable!(),
-            }
+            globals.timeout = Some(next);
             continue;
         }
         if let Some(value) = value.strip_prefix("--timeout=") {
             globals.timeout = Some(value.to_owned());
-            words.remove(index);
-            continue;
-        }
-        if let Some(value) = value.strip_prefix("--permission-profile=") {
-            globals.permission_profile = Some(value.to_owned());
-            words.remove(index);
-            continue;
-        }
-        if let Some(value) = value.strip_prefix("--env-pass=") {
-            globals.env_pass.push(value.to_owned());
             words.remove(index);
             continue;
         }

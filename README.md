@@ -158,9 +158,6 @@ path passed with `--config`.
 ```toml
 [execution]
 timeout_ms = 86400000
-permission_profile = ":workspace"
-allow_danger_full_access = false
-include_managed_config = true
 termination_grace_ms = 5000
 forced_cleanup_margin_ms = 2000
 result_serialization_margin_ms = 1000
@@ -172,34 +169,27 @@ ttl_ms = 300000
 [output]
 model_max_bytes = 32768
 tail_bytes = 65536
-
-[environment]
-pass = []
 ```
 
-GitHub Actions waits and Oracle browser reviews need network access. The
-default `:workspace` profile does not grant it. Opt in explicitly:
-
-```toml
-[execution]
-allow_danger_full_access = true
-```
-
-Then:
+Codex owns command approval and sandbox policy. Longrun does not add a second
+sandbox or permission gate; a Codex-hook command runs directly with the hook's
+inherited environment.
 
 ```sh
-longrun --permission-profile :danger-full-access -- \
-  gh run watch RUN_ID --repo OWNER/REPO --exit-status
+longrun gh run watch RUN_ID --repo OWNER/REPO --exit-status
+longrun oracle --engine browser --model gpt-5.6-sol -p "TASK"
 ```
 
-Longrun does not widen permissions automatically, and it does not support
-shell composition such as `;`, `|`, or `&&` in the Codex command form. Pass a
-program and native arguments instead.
+Longrun still bounds output, enforces the timeout, and cleans up its owned
+process tree. It does not support shell composition such as `;`, `|`, or `&&`
+in the Codex command form. Pass a program and native arguments instead.
 
 ## Security and lifecycle
 
-- Codex-hook execution uses `codex sandbox` with the selected named profile.
-- Protected environment variables are removed unless explicitly allowed.
+- Codex-hook execution runs the original target directly after the receipt is
+  delivered.
+- The target inherits the hook environment; Longrun does not redact or
+  selectively pass environment variables.
 - Output is captured with bounded tails, byte counts, hashes, and an
   untrusted-output marker before it is returned to the model.
 - The ephemeral handoff is private, one-time, and removed after delivery.

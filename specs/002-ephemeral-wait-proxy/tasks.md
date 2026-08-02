@@ -50,7 +50,7 @@ user story.
 - [X] T007 [P] Add failing child-drop, timeout, cancellation, descendant, and leader-exit process tests in `tests/process_tree.rs`
 - [X] T008 Implement protected ephemeral handoff serialization, atomic transitions, expiry cleanup, and one-time claim in `src/handoff.rs`
 - [X] T009 Simplify native argument, target, terminal-reason, and result-envelope types for ephemeral execution in `src/protocol.rs`
-- [X] T010 Simplify handoff TTL, timeout, termination/forced-cleanup margins, named-profile, environment, output, result-serialization-margin, and PostToolUse-timeout configuration in `src/config.rs`
+- [X] T010 Simplify handoff TTL, timeout, termination/forced-cleanup margins, output, result-serialization-margin, and PostToolUse-timeout configuration in `src/config.rs`
 - [X] T011 Add ephemeral runtime paths and restrictive ownership checks without creating a durable job database in `src/paths.rs`
 - [X] T012 Implement the shared direct executor with `Child::kill_on_drop(true)`, concurrent rolling output, exact target status, and no complete-log reread in `src/runner.rs`
 - [X] T013 Implement Unix process-group cleanup and observable owner-shutdown handling in `src/platform/mod.rs` and `src/platform/unix.rs`
@@ -139,7 +139,8 @@ shutdown, duplicate delivery, lost delivery, and stale-state paths.
 
 ## Phase 6: User Story 4 - Explicit Permission and Bounded Context (Priority: P1)
 
-**Goal**: The wait proxy preserves sandbox policy and returns only bounded,
+**Goal**: Codex owns approval and sandbox policy; the wait proxy directly runs
+the approved target in the inherited hook environment and returns only bounded,
 untrusted result data.
 
 **Independent Test**: Attempt denied filesystem/network operations, secret
@@ -148,16 +149,16 @@ output.
 
 ### Tests for User Story 4
 
-- [X] T042 [P] [US4] Add failing named-profile, no-escalation, denied-filesystem, denied-network, and secret-environment tests in `tests/security.rs`
+- [X] T042 [P] [US4] Add failing second-sandbox, second-approval, environment-filtering, and direct-inherited-environment tests in `tests/security.rs`
 - [X] T043 [US4] Add failing shell-composition, wrapper, metacharacter, and literal-native-argv tests in `tests/security.rs`
 - [X] T044 [P] [US4] Add failing large-output, invalid-byte, fake-hook-JSON, fake-receipt, prompt-injection, and no-hook-spill output tests in `tests/output.rs`
 
 ### Implementation for User Story 4
 
-- [X] T045 [US4] Enforce immutable named permission profiles, mandatory `--include-managed-config` resolution, and fail-closed diagnostics for Codex-hook execution; keep direct terminal/CI usable without Codex, apply explicit danger opt-in, safe environment clearing, and no automatic widening in `src/config.rs` and `src/runner.rs`
+- [X] T045 [US4] Keep Codex approval and sandbox policy outside Longrun; execute Codex-hook targets directly with the inherited environment and no second permission gate in `src/config.rs` and `src/runner.rs`
 - [X] T046 [US4] Implement rolling bounded stdout/stderr capture, byte counts, truncation metadata, escaped result data, and untrusted-output envelopes in `src/output.rs` and `src/hook/output.rs`
-- [X] T047 [US4] Add PostToolUse timeout arithmetic, `additionalContextLimit: 0`, and profile-resolution diagnostics without a PermissionRequest hook in `assets/codex/hooks.json` and `src/integration/codex.rs`
-- [X] T048 [US4] Run the security and bounded-context suites and record sandbox/no-escalation evidence in `specs/002-ephemeral-wait-proxy/implementation-log.md`
+- [X] T047 [US4] Add PostToolUse timeout arithmetic, `additionalContextLimit: 0`, and direct-runner diagnostics without a PermissionRequest hook in `assets/codex/hooks.json` and `src/integration/codex.rs`
+- [X] T048 [US4] Run the security and bounded-context suites and record direct-execution/no-second-boundary evidence in `specs/002-ephemeral-wait-proxy/implementation-log.md`
 
 **Checkpoint**: Longrun cannot widen permissions or flood model context while
 waiting.
@@ -174,7 +175,7 @@ assets, repair an old installation, and preserve unrelated configuration.
 
 - [X] T049 [P] [US5] Add failing hook/skill/plugin rendering snapshots for the new command surface in `tests/integration_codex.rs`
 - [X] T050 [US5] Add failing init, repair, moved-binary, obsolete-SessionStart, and unrelated-file-preservation tests in `tests/integration_codex.rs`
-- [X] T051 [US5] Add failing doctor checks for active hooks, timeout margin, sandbox availability, and absence of supervisor/service health checks in `tests/integration_codex.rs`
+- [X] T051 [US5] Add failing doctor checks for active hooks, timeout margin, direct runner availability, and absence of supervisor/service health checks in `tests/integration_codex.rs`
 
 ### Implementation for User Story 5
 
@@ -290,6 +291,6 @@ convergence evidence is complete:
 
 - [X] T063 Add lifecycle tests for cancellation, handled signals, leader exit, descendant cleanup, and documented uncatchable owner death per FR-014, FR-015, and SC-005 (completed)
 - [X] T064 Add lost-delivery, manual-rerun, old-state inertness, and no-persistent-artifact tests per FR-012, FR-013, FR-022, and SC-004 (completed)
-- [X] T065 Add denied filesystem/network, protected-environment, forged-receipt, prompt-injection, and no-hook-spill tests per FR-011, FR-017, FR-019, and SC-006/SC-007 (completed)
+- [X] T065 Add direct-inherited-environment, forged-receipt, prompt-injection, and no-hook-spill tests per FR-011, FR-017, FR-019, and SC-006/SC-007 (completed)
 - [X] T066 Add ignored Codex-hook GitHub Actions and Oracle browser acceptance harnesses covering one invocation, failure/auth behavior, bounded output, and no reattachment per US2 and SC-011 (completed)
 - [X] T067 Run the complete quickstart matrix and map direct, RTK, active-session, GitHub, Oracle, lifecycle, security, and upgrade evidence to FR/SC coverage per SC-001–SC-012 (completed)

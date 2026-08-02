@@ -2,7 +2,6 @@
 mod unix {
     use std::{
         fs,
-        os::unix::fs::PermissionsExt,
         path::Path,
         process::{Command, Stdio},
         thread,
@@ -13,7 +12,7 @@ mod unix {
     use longrun::{
         config::Config,
         paths::AppPaths,
-        protocol::{EnvironmentPolicy, NativeString, TargetSpec, TerminalReason},
+        protocol::{NativeString, TargetSpec, TerminalReason},
         runner::{ExecutionMode, OutputMode, Runner},
     };
     use nix::{
@@ -35,7 +34,7 @@ mod unix {
 
     fn target(script: impl Into<String>, timeout_ms: u64) -> TargetSpec {
         TargetSpec {
-            protocol_version: 2,
+            protocol_version: 3,
             program: NativeString::from_os_string("/bin/sh".into()),
             args: vec![
                 NativeString::from_os_string("-c".into()),
@@ -45,8 +44,6 @@ mod unix {
                 std::env::current_dir().expect("cwd").into_os_string(),
             ),
             timeout_ms,
-            permission_profile: ":workspace".into(),
-            environment_policy: EnvironmentPolicy::default(),
             created_at_ms: 1,
             command_hash: "sha256:test".into(),
         }
@@ -130,19 +127,12 @@ mod unix {
     async fn timeout_kills_the_owned_process_group_and_descendant() {
         let root = std::env::temp_dir().join(format!("longrun-tree-{}", Uuid::now_v7()));
         fs::create_dir_all(&root).expect("root");
-        let sandbox = root.join("codex");
-        fs::write(
-            &sandbox,
-            "#!/bin/sh\nwhile [ \"$1\" != \"--\" ]; do shift; done\nshift\nexec \"$@\"\n",
-        )
-        .expect("script");
-        fs::set_permissions(&sandbox, fs::Permissions::from_mode(0o755)).expect("mode");
         let paths = paths(&root);
         paths.ensure_private_state().expect("state");
         let mut config = Config::default();
         config.execution.termination_grace_ms = 25;
         config.execution.post_tool_use_timeout_ms = 10_000;
-        let result = Runner::with_sandbox_binary(sandbox)
+        let result = Runner::new()
             .execute(
                 &target("sleep 10 & echo $!; wait", 1_000),
                 &config,
