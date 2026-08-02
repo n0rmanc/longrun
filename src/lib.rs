@@ -6,6 +6,7 @@ pub mod error;
 pub mod handoff;
 pub mod hook;
 pub mod integration;
+pub mod metrics;
 pub mod output;
 pub mod paths;
 pub mod platform;

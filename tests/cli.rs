@@ -59,6 +59,24 @@ fn hook_and_receipt_commands_are_hidden_management_paths() {
     ));
 }
 
+#[test]
+fn gain_is_a_management_command_and_explicit_separator_keeps_target_form() {
+    let gain = Cli::try_parse_from(["longrun", "gain", "--json"]).expect("gain parse");
+    assert!(matches!(gain.command, Command::Gain(_)));
+
+    let global_json =
+        Cli::try_parse_from(["longrun", "--json", "gain"]).expect("global json gain parse");
+    assert!(global_json.json);
+    assert!(matches!(global_json.command, Command::Gain(_)));
+
+    let target =
+        Cli::try_parse_from(["longrun", "--", "gain", "arg"]).expect("explicit target parse");
+    let Command::Target(words) = target.command else {
+        panic!("explicit separator must preserve target form");
+    };
+    assert_eq!(words, vec![OsString::from("gain"), OsString::from("arg")]);
+}
+
 #[cfg(unix)]
 mod integration {
     use std::{
@@ -203,6 +221,149 @@ mod integration {
         assert_eq!(output.status.code(), Some(0));
         assert_eq!(output.stdout, argument.as_bytes());
         assert!(!marker.exists());
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn gain_reports_direct_terminal_results_and_outcome_counts() {
+        let root = setup();
+
+        let success = run(&root, ["--", "/bin/sh", "-c", "exit 0"].map(OsString::from));
+        assert_eq!(success.status.code(), Some(0));
+        let failure = run(&root, ["--", "/bin/sh", "-c", "exit 7"].map(OsString::from));
+        assert_eq!(failure.status.code(), Some(7));
+        let timeout = run(
+            &root,
+            ["--timeout", "25", "--", "/bin/sh", "-c", "sleep 1"].map(OsString::from),
+        );
+        assert_eq!(timeout.status.code(), Some(124));
+
+        let report = run(&root, ["gain", "--json"].map(OsString::from));
+        assert_eq!(report.status.code(), Some(0));
+        let report: serde_json::Value = serde_json::from_slice(&report.stdout).expect("gain JSON");
+        assert_eq!(report["recorded_executions"], 3);
+        assert_eq!(report["outcomes"]["completed"], 1);
+        assert_eq!(report["outcomes"]["failed"], 1);
+        assert_eq!(report["outcomes"]["timed_out"], 1);
+        assert_eq!(
+            report["outcomes"]
+                .as_object()
+                .expect("outcomes")
+                .values()
+                .map(|value| value.as_u64().expect("count"))
+                .sum::<u64>(),
+            report["recorded_executions"].as_u64().expect("total")
+        );
+        assert_eq!(report["by_program"][0]["program"], "sh");
+
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn gain_human_and_json_reports_share_per_program_values() {
+        let root = setup();
+        let sh = run(&root, ["/bin/sh", "-c", "exit 0"].map(OsString::from));
+        assert_eq!(sh.status.code(), Some(0));
+        let printf = run(
+            &root,
+            ["/usr/bin/printf", "%s", "literal"].map(OsString::from),
+        );
+        assert_eq!(printf.status.code(), Some(0));
+
+        let human = run(&root, ["gain"].map(OsString::from));
+        assert_eq!(human.status.code(), Some(0));
+        let human = String::from_utf8_lossy(&human.stdout);
+        assert!(human.contains("By Program"));
+        assert!(human.contains("sh"));
+        assert!(human.contains("printf"));
+        assert!(!human.contains("literal"));
+
+        let json = run(&root, ["--json", "gain"].map(OsString::from));
+        assert_eq!(json.status.code(), Some(0));
+        let json: serde_json::Value = serde_json::from_slice(&json.stdout).expect("gain JSON");
+        assert_eq!(json["recorded_executions"], 2);
+        assert_eq!(json["by_program"].as_array().expect("programs").len(), 2);
+
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn gain_aggregates_one_hundred_direct_records() {
+        let root = setup();
+
+        for _ in 0..100 {
+            let output = run(&root, ["/usr/bin/true"].map(OsString::from));
+            assert_eq!(
+                output.status.code(),
+                Some(0),
+                "stderr: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        let report = run(&root, ["gain", "--json"].map(OsString::from));
+        assert_eq!(report.status.code(), Some(0));
+        let report: serde_json::Value = serde_json::from_slice(&report.stdout).expect("gain JSON");
+        assert_eq!(report["recorded_executions"], 100);
+        assert_eq!(report["outcomes"]["completed"], 100);
+
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn gain_clear_returns_json_and_preserves_explicit_config() {
+        let root = setup();
+        let config = root.join("config.toml");
+        let config_contents = b"[execution]\ntimeout_ms = 12000\n";
+        fs::write(&config, config_contents).expect("config");
+
+        let target = run(
+            &root,
+            [
+                "--config",
+                config.to_str().expect("config path"),
+                "--",
+                "/bin/echo",
+                "before-clear",
+            ]
+            .map(OsString::from),
+        );
+        assert_eq!(target.status.code(), Some(0));
+
+        let clear = run(
+            &root,
+            [
+                "--config",
+                config.to_str().expect("config path"),
+                "gain",
+                "--clear",
+                "--json",
+            ]
+            .map(OsString::from),
+        );
+        assert_eq!(clear.status.code(), Some(0));
+        let clear: serde_json::Value = serde_json::from_slice(&clear.stdout).expect("clear JSON");
+        assert_eq!(clear, serde_json::json!({"cleared": true}));
+        assert_eq!(
+            fs::read(&config).expect("config after clear"),
+            config_contents
+        );
+
+        let report = run(
+            &root,
+            [
+                "--config",
+                config.to_str().expect("config path"),
+                "gain",
+                "--json",
+            ]
+            .map(OsString::from),
+        );
+        assert_eq!(report.status.code(), Some(0));
+        let report: serde_json::Value =
+            serde_json::from_slice(&report.stdout).expect("report after clear");
+        assert_eq!(report["recorded_executions"], 0);
+
         fs::remove_dir_all(root).expect("cleanup");
     }
 

@@ -17,6 +17,7 @@ use crate::{
         pre_tool_use::{handle_pre_tool_use, now_ms},
     },
     integration::codex,
+    metrics,
     paths::AppPaths,
     protocol::{
         EnvironmentPolicy, NativeString, ResultEnvelope, TargetSpec, TerminalReason, sha256_hex,
@@ -51,6 +52,7 @@ pub enum Command {
     Init(InitArgs),
     Uninstall(UninstallArgs),
     Doctor(JsonArgs),
+    Gain(GainArgs),
     #[command(hide = true)]
     Hook(HookArgs),
     #[command(hide = true)]
@@ -118,6 +120,14 @@ pub struct JsonArgs {
 }
 
 #[derive(Debug, Args)]
+pub struct GainArgs {
+    #[arg(long)]
+    pub clear: bool,
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
 pub struct InternalArgs {
     #[command(subcommand)]
     pub command: InternalCommand,
@@ -171,6 +181,7 @@ pub async fn dispatch(
     config: &Config,
     _config_path: &std::path::Path,
 ) -> Result<ExitCode> {
+    let global_json = cli.json;
     let globals = GlobalsForTarget {
         timeout: cli.timeout,
         permission_profile: cli.permission_profile,
@@ -179,7 +190,7 @@ pub async fn dispatch(
     match cli.command {
         Command::Target(words) => {
             let target = target_from_words(words, &globals, config)?;
-            execute_target(&target, paths, config, cli.json).await
+            execute_target(&target, paths, config, global_json).await
         }
         Command::Init(arguments) => {
             let report = codex::init(paths, &std::env::current_exe()?, arguments.repair)?;
@@ -231,6 +242,7 @@ pub async fn dispatch(
                 ExitCode::from(1)
             })
         }
+        Command::Gain(arguments) => gain(arguments, paths, global_json).await,
         Command::Hook(arguments) => hook(arguments, paths, config).await,
         Command::Internal(arguments) => internal(arguments, paths).await,
         Command::Run(_)
@@ -250,6 +262,33 @@ pub async fn dispatch(
                 .into(),
         )),
     }
+}
+
+pub fn is_management_command(program: &OsStr) -> bool {
+    matches!(
+        program.to_str(),
+        Some(
+            "init"
+                | "uninstall"
+                | "doctor"
+                | "gain"
+                | "hook"
+                | "internal"
+                | "run"
+                | "run-shell"
+                | "submit"
+                | "submit-shell"
+                | "wait"
+                | "status"
+                | "list"
+                | "logs"
+                | "cancel"
+                | "gc"
+                | "daemon"
+                | "service"
+                | "mcp"
+        )
+    )
 }
 
 pub fn target_from_words(
@@ -354,11 +393,37 @@ async fn execute_target(
             },
         )
         .await?;
+    if let Err(error) = metrics::record(paths, target, ExecutionMode::Direct, &result) {
+        eprintln!("longrun: warning: could not record metrics: {error}");
+    }
     if json {
         serde_json::to_writer(std::io::stdout(), &result)?;
         std::io::stdout().write_all(b"\n")?;
     }
     Ok(result_exit_code(&result))
+}
+
+async fn gain(arguments: GainArgs, paths: &AppPaths, global_json: bool) -> Result<ExitCode> {
+    let json = global_json || arguments.json;
+    if arguments.clear {
+        metrics::clear(paths)?;
+        if json {
+            serde_json::to_writer(std::io::stdout(), &serde_json::json!({"cleared": true}))?;
+            std::io::stdout().write_all(b"\n")?;
+        } else {
+            println!("Cleared Longrun execution metrics.");
+        }
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    let report = metrics::read_report(paths)?;
+    if json {
+        serde_json::to_writer(std::io::stdout(), &report)?;
+        std::io::stdout().write_all(b"\n")?;
+    } else {
+        metrics::write_human_report(&report, &mut std::io::stdout())?;
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 fn result_exit_code(result: &ResultEnvelope) -> ExitCode {

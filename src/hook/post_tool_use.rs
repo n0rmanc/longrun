@@ -8,6 +8,7 @@ use crate::{
         input::PostToolUseInput,
         output::{PostToolUseOutput, bounded_result_context},
     },
+    metrics,
     paths::AppPaths,
     protocol::NativeString,
     runner::{ExecutionMode, OutputMode, Runner},
@@ -52,8 +53,11 @@ pub async fn handle_post_tool_use(
             OutputMode::Capture,
         )
         .await;
-    store.remove(&claimed)?;
     let result = result?;
+    store.remove(&claimed)?;
+    if let Err(error) = metrics::record(paths, &target, ExecutionMode::CodexHook, &result) {
+        tracing::warn!(error = %error, "could not record Longrun metrics");
+    }
     Ok(Some(PostToolUseOutput::completed(bounded_result_context(
         &result,
         config.output.model_max_bytes,

@@ -6,7 +6,7 @@ use std::{
 };
 
 use crate::{
-    cli::{GlobalsForTarget, target_from_words_at_cwd},
+    cli::{GlobalsForTarget, is_management_command, target_from_words_at_cwd},
     config::Config,
     error::{Error, Result},
     handoff::HandoffStore,
@@ -55,11 +55,14 @@ pub fn handle_pre_tool_use(
         }
         return Ok(None);
     };
-    let globals = parse_target_options(&mut target_words)?;
+    let (globals, explicit_separator) = parse_target_options(&mut target_words)?;
     if target_words.is_empty() {
         return Ok(Some(PreToolUseOutput::deny(
             "Invalid Longrun command: missing target program.",
         )));
+    }
+    if !explicit_separator && is_management_command(&target_words[0]) {
+        return Ok(None);
     }
     let cwd = NativeString::from_os_string(fs::canonicalize(&input.common.cwd)?.into_os_string());
     let target = match target_from_words_at_cwd(target_words, &globals, config, cwd.clone(), now_ms)
@@ -122,14 +125,20 @@ fn has_unsupported_wrapper(words: &[String], expected_binary: &str) -> bool {
                 && words.get(2).map(String::as_str) == Some(RTK_LONGRUN_COMMAND)))
 }
 
-fn parse_target_options(words: &mut Vec<OsString>) -> Result<GlobalsForTarget> {
+fn parse_target_options(words: &mut Vec<OsString>) -> Result<(GlobalsForTarget, bool)> {
     let mut globals = GlobalsForTarget::default();
+    let mut explicit_separator = false;
     let index = 0;
     while index < words.len() {
         let value = words[index].to_string_lossy();
         if value == "--" {
             words.drain(..=index);
-            return Ok(globals);
+            explicit_separator = true;
+            break;
+        }
+        if value == "--json" {
+            words.remove(index);
+            continue;
         }
         if value == "--timeout" || value == "--permission-profile" || value == "--env-pass" {
             let option = value.into_owned();
@@ -164,7 +173,7 @@ fn parse_target_options(words: &mut Vec<OsString>) -> Result<GlobalsForTarget> {
         }
         break;
     }
-    Ok(globals)
+    Ok((globals, explicit_separator))
 }
 
 pub fn parse_strict_shell_words(command: &str) -> Result<Vec<String>> {

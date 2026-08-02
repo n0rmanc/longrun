@@ -103,6 +103,29 @@ model does not need to poll. The command returns once the target exits, times
 out, or is cancelled. If the Codex turn is lost before delivery, rerun the
 command manually; Longrun does not keep a background result.
 
+## Execution metrics
+
+Longrun records minimal local metadata after each direct or Codex-hook target
+reaches a terminal result. View the global count, total wait, average duration,
+outcome counts, and per-program breakdown:
+
+```sh
+longrun gain
+```
+
+Use JSON for scripts, or clear only the local metrics history:
+
+```sh
+longrun gain --json
+longrun gain --clear
+```
+
+`gain` reports measured Longrun executions and elapsed time only. It does not
+estimate Codex/provider request counts or token savings, and it never stores
+command arguments, output, prompts, credentials, or request bodies. The
+management command is distinct from an executable named `gain`; use
+`longrun -- gain` for that target.
+
 Use `--` when the target program could be confused with a Longrun option:
 
 ```sh
@@ -196,4 +219,4 @@ cargo test --locked
 ```
 
 For the feature contract and acceptance scenarios, see
-[`specs/002-ephemeral-wait-proxy/quickstart.md`](specs/002-ephemeral-wait-proxy/quickstart.md).
+[`specs/003-execution-metrics/quickstart.md`](specs/003-execution-metrics/quickstart.md).
