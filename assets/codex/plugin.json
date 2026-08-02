@@ -1,7 +1,7 @@
 {
   "name": "longrun",
   "version": "0.1.7",
-  "description": "Run finite long-running commands without model polling.",
+  "description": "Wait for finite commands without model polling through a thin Codex hook adapter.",
   "skills": "./skills/",
   "hooks": "./hooks.json",
   "interface": {

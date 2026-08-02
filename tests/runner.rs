@@ -2,15 +2,25 @@
 mod unix {
     use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf};
 
+    use base64::Engine;
     use longrun::{
         config::Config,
         paths::AppPaths,
-        protocol::{EnvironmentPolicy, ExecutionMode, JobSpecification, NativeString, ShellMode},
-        runner::Runner,
-        store::Store,
-        worker::run_worker_with_runner,
+        protocol::{EnvironmentPolicy, NativeString, TargetSpec, TerminalReason},
+        runner::{ExecutionMode, OutputMode, Runner},
     };
     use uuid::Uuid;
+
+    fn paths(root: &std::path::Path) -> AppPaths {
+        AppPaths {
+            config_dir: root.join("config"),
+            data_dir: root.join("data"),
+            state_dir: root.join("state"),
+            runtime_dir: root.join("runtime"),
+            handoff_dir: root.join("runtime/handoffs"),
+            integration_dir: root.join("integration"),
+        }
+    }
 
     fn fake_codex(root: &std::path::Path) -> PathBuf {
         let path = root.join("codex");
@@ -23,20 +33,17 @@ mod unix {
         path
     }
 
-    fn specification() -> JobSpecification {
-        JobSpecification {
-            protocol_version: 1,
-            job_id: Uuid::now_v7(),
+    fn target(script: &str) -> TargetSpec {
+        TargetSpec {
+            protocol_version: 2,
             program: NativeString::from_os_string("/bin/sh".into()),
             args: vec![
                 NativeString::from_os_string("-c".into()),
-                NativeString::from_os_string("printf out; printf err >&2; exit 7".into()),
+                NativeString::from_os_string(script.into()),
             ],
             cwd: NativeString::from_os_string(
                 std::env::current_dir().expect("cwd").into_os_string(),
             ),
-            execution_mode: ExecutionMode::Embedded,
-            shell_mode: ShellMode::Direct,
             timeout_ms: 1_000,
             permission_profile: ":workspace".into(),
             environment_policy: EnvironmentPolicy::default(),
@@ -46,96 +53,74 @@ mod unix {
     }
 
     #[tokio::test]
-    async fn runner_builds_sandbox_command_and_persists_separate_logs_and_child_exit_status() {
-        let root = std::env::temp_dir().join(format!("longrun-runner-{}", std::process::id()));
+    async fn hook_runner_uses_the_named_codex_profile_and_keeps_bounded_output_in_memory() {
+        let root = std::env::temp_dir().join(format!("longrun-runner-{}", Uuid::now_v7()));
         fs::create_dir_all(&root).expect("root");
-        let paths = AppPaths {
-            config_dir: root.join("config"),
-            data_dir: root.join("data"),
-            state_dir: root.join("state"),
-            log_dir: root.join("logs"),
-            jobs_dir: root.join("jobs"),
-            integration_dir: root.join("integration"),
-            socket_path: root.join("longrun.sock"),
-        };
+        let paths = paths(&root);
         paths.ensure_private_state().expect("state");
         let result = Runner::with_sandbox_binary(fake_codex(&root))
-            .execute(&specification(), &Config::default(), &paths)
+            .execute(
+                &target("printf out; printf err >&2; exit 7"),
+                &Config::default(),
+                &paths,
+                ExecutionMode::CodexHook,
+                OutputMode::Capture,
+            )
             .await
             .expect("run");
 
+        assert_eq!(result.terminal_reason, TerminalReason::Exited);
+        assert_eq!(result.exit_code, Some(7));
         assert_eq!(
+            base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(result.stdout.tail_base64url)
+                .expect("stdout"),
+            b"out"
+        );
+        assert_eq!(
+            base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(result.stderr.tail_base64url)
+                .expect("stderr"),
+            b"err"
+        );
+        assert!(
             fs::read_to_string(root.join("sandbox.args"))
                 .expect("sandbox invocation")
                 .lines()
-                .collect::<Vec<_>>(),
-            vec![
-                "sandbox",
-                "-P",
-                ":workspace",
-                "-C",
-                &std::env::current_dir().expect("cwd").display().to_string(),
-                "--",
-                "/bin/sh",
-                "-c",
-                "printf out; printf err >&2; exit 7",
-            ]
+                .any(|line| line == "--include-managed-config")
         );
-        assert_eq!(result.exit_code, Some(7));
-        assert_eq!(
-            fs::read_to_string(
-                root.join("logs")
-                    .join(format!("{}.stdout.log", result.job_id))
-            )
-            .expect("stdout"),
-            "out"
+        assert!(
+            fs::read_dir(&paths.handoff_dir)
+                .expect("handoff dir")
+                .next()
+                .is_none()
         );
-        assert_eq!(
-            fs::read_to_string(
-                root.join("logs")
-                    .join(format!("{}.stderr.log", result.job_id))
-            )
-            .expect("stderr"),
-            "err"
-        );
+        assert!(!paths.state_dir.join("longrun.sqlite").exists());
         fs::remove_dir_all(root).expect("cleanup");
     }
 
     #[tokio::test]
-    async fn worker_persists_runner_result_before_returning() {
-        let root = std::env::temp_dir().join(format!("longrun-runner-store-{}", Uuid::now_v7()));
+    async fn direct_runner_returns_target_status_without_requiring_codex() {
+        let root = std::env::temp_dir().join(format!("longrun-runner-direct-{}", Uuid::now_v7()));
         fs::create_dir_all(&root).expect("root");
-        let paths = AppPaths {
-            config_dir: root.join("config"),
-            data_dir: root.join("data"),
-            state_dir: root.join("state"),
-            log_dir: root.join("logs"),
-            jobs_dir: root.join("jobs"),
-            integration_dir: root.join("integration"),
-            socket_path: root.join("longrun.sock"),
-        };
+        let paths = paths(&root);
         paths.ensure_private_state().expect("state");
-        let job = specification();
-        let database = paths.state_dir.join("longrun.sqlite");
-        Store::open(&database)
-            .expect("store")
-            .create_job(&job)
-            .expect("job");
-        let result = run_worker_with_runner(
-            job.job_id,
-            &database,
-            &Config::default(),
-            &paths,
-            &Runner::with_sandbox_binary(fake_codex(&root)),
-        )
-        .await
-        .expect("worker");
+        let result = Runner::new()
+            .execute(
+                &target("printf direct; exit 3"),
+                &Config::default(),
+                &paths,
+                ExecutionMode::Direct,
+                OutputMode::Capture,
+            )
+            .await
+            .expect("direct run");
+        assert_eq!(result.exit_code, Some(3));
         assert_eq!(
-            Store::open(&database)
-                .expect("store")
-                .result(job.job_id)
-                .expect("result"),
-            result
+            base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(result.stdout.tail_base64url)
+                .expect("stdout"),
+            b"direct"
         );
         fs::remove_dir_all(root).expect("cleanup");
     }

@@ -1,6 +1,6 @@
 #[cfg(unix)]
 mod unix {
-    use std::{ffi::OsString, fs, os::unix::fs::PermissionsExt, path::Path, process::Command};
+    use std::{fs, os::unix::fs::PermissionsExt, path::Path};
 
     use longrun::{
         config::Config,
@@ -8,45 +8,31 @@ mod unix {
             input::{CodexCommonInput, PreToolUseInput},
             pre_tool_use::handle_pre_tool_use,
         },
-        receipt::ReceiptSigner,
-        store::Store,
+        paths::AppPaths,
+        protocol::{EnvironmentPolicy, NativeString, TargetSpec, TerminalReason},
+        runner::{ExecutionMode, OutputMode, Runner},
     };
     use uuid::Uuid;
 
-    fn setup() -> std::path::PathBuf {
-        let root = std::env::temp_dir().join(format!("longrun-security-{}", Uuid::now_v7()));
-        fs::create_dir_all(root.join("bin")).expect("root");
-        let codex = root.join("bin/codex");
-        fs::write(
-            &codex,
-            "#!/bin/sh\nwhile [ \"$1\" != \"--\" ]; do shift; done\nshift\nexec \"$@\"\n",
-        )
-        .expect("sandbox");
-        fs::set_permissions(&codex, fs::Permissions::from_mode(0o755)).expect("mode");
-        root
+    fn paths(root: &std::path::Path) -> AppPaths {
+        AppPaths {
+            config_dir: root.join("config"),
+            data_dir: root.join("data"),
+            state_dir: root.join("state"),
+            runtime_dir: root.join("runtime"),
+            handoff_dir: root.join("runtime/handoffs"),
+            integration_dir: root.join("integration"),
+        }
     }
 
-    fn longrun(root: &std::path::Path) -> Command {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_longrun"));
-        command.env("HOME", root.join("home")).env(
-            "PATH",
-            format!(
-                "{}:{}",
-                root.join("bin").display(),
-                std::env::var("PATH").expect("PATH")
-            ),
-        );
-        command
-    }
-
-    fn pre_tool_use(command: &str) -> PreToolUseInput {
+    fn input(command: &str, cwd: &Path) -> PreToolUseInput {
         PreToolUseInput {
             common: CodexCommonInput {
                 session_id: "session".into(),
                 agent_id: None,
                 agent_type: None,
                 transcript_path: None,
-                cwd: std::env::current_dir().expect("cwd"),
+                cwd: cwd.into(),
                 hook_event_name: "PreToolUse".into(),
                 model: "gpt-test".into(),
                 permission_mode: "default".into(),
@@ -54,158 +40,109 @@ mod unix {
             turn_id: "turn".into(),
             tool_use_id: "tool".into(),
             tool_name: "Bash".into(),
-            tool_input: serde_json::json!({ "command": command }),
+            tool_input: serde_json::json!({"command": command}),
         }
     }
 
     #[test]
-    fn explicit_secret_pass_overrides_the_default_deny_pattern_but_unlisted_secrets_stay_hidden() {
-        let root = setup();
-        let allowed = format!("LONGRUN_ALLOWED_TOKEN_{}", Uuid::now_v7().simple());
-        let blocked = format!("LONGRUN_BLOCKED_SECRET_{}", Uuid::now_v7().simple());
-        let script =
-            format!("printf '%s|%s' \"${{{allowed}:-missing}}\" \"${{{blocked}:-missing}}\"");
-        let output = longrun(&root)
-            .args([
-                OsString::from("run"),
-                OsString::from("--env-pass"),
-                OsString::from(&allowed),
-                OsString::from("--"),
-                OsString::from("/bin/sh"),
-                OsString::from("-c"),
-                OsString::from(script),
-            ])
-            .env(&allowed, "allowed")
-            .env(&blocked, "blocked")
-            .output()
-            .expect("run longrun");
-
-        assert_eq!(output.status.code(), Some(0));
-        assert_eq!(output.stdout, b"allowed|missing");
+    fn hook_requires_the_absolute_installed_binary_and_rejects_shadowing() {
+        let root = std::env::temp_dir().join(format!("longrun-security-{}", Uuid::now_v7()));
+        let paths = paths(&root);
+        paths.ensure_private_state().expect("state");
+        let expected = Path::new("/opt/longrun");
+        assert!(
+            handle_pre_tool_use(
+                &input(
+                    "longrun /bin/echo shadowed",
+                    &std::env::current_dir().expect("cwd")
+                ),
+                expected,
+                &paths,
+                &Config::default(),
+                1,
+            )
+            .expect("hook")
+            .is_none()
+        );
+        assert!(
+            handle_pre_tool_use(
+                &input(
+                    "\"/tmp/longrun\" /bin/echo shadowed",
+                    &std::env::current_dir().expect("cwd"),
+                ),
+                expected,
+                &paths,
+                &Config::default(),
+                1,
+            )
+            .expect("hook")
+            .is_none()
+        );
         fs::remove_dir_all(root).expect("cleanup");
     }
 
-    #[test]
-    fn sandbox_denial_does_not_fall_back_to_direct_execution() {
-        let root = setup();
+    #[tokio::test]
+    async fn hook_runner_fails_closed_without_falling_back_to_direct_execution() {
+        let root =
+            std::env::temp_dir().join(format!("longrun-security-sandbox-{}", Uuid::now_v7()));
+        fs::create_dir_all(&root).expect("root");
+        let sandbox = root.join("codex");
         fs::write(
-            root.join("bin/codex"),
+            &sandbox,
             "#!/bin/sh\nprintf 'sandbox denied\\n' >&2\nexit 42\n",
         )
-        .expect("replace sandbox");
-        let target_marker = root.join("requested-command-ran");
-        let output = longrun(&root)
-            .args([
-                OsString::from("run"),
-                OsString::from("--"),
-                OsString::from("/bin/sh"),
-                OsString::from("-c"),
-                OsString::from(format!("touch {}", target_marker.display())),
-            ])
-            .output()
-            .expect("run longrun");
-
-        assert_eq!(output.status.code(), Some(42));
-        assert!(output.stderr.starts_with(b"sandbox denied\n"));
-        assert!(!target_marker.exists());
+        .expect("sandbox");
+        fs::set_permissions(&sandbox, fs::Permissions::from_mode(0o755)).expect("mode");
+        let paths = paths(&root);
+        paths.ensure_private_state().expect("state");
+        let marker = root.join("target-ran");
+        let target = TargetSpec {
+            protocol_version: 2,
+            program: NativeString::from_os_string("/bin/sh".into()),
+            args: vec![
+                NativeString::from_os_string("-c".into()),
+                NativeString::from_os_string(format!("touch {}", marker.display()).into()),
+            ],
+            cwd: NativeString::from_os_string(
+                std::env::current_dir().expect("cwd").into_os_string(),
+            ),
+            timeout_ms: 1_000,
+            permission_profile: ":workspace".into(),
+            environment_policy: EnvironmentPolicy::default(),
+            created_at_ms: 1,
+            command_hash: "sha256:security".into(),
+        };
+        let result = Runner::with_sandbox_binary(sandbox)
+            .execute(
+                &target,
+                &Config::default(),
+                &paths,
+                ExecutionMode::CodexHook,
+                OutputMode::Capture,
+            )
+            .await
+            .expect("sandbox result");
+        assert_eq!(result.terminal_reason, TerminalReason::Exited);
+        assert_eq!(result.exit_code, Some(42));
+        assert!(!marker.exists());
         fs::remove_dir_all(root).expect("cleanup");
     }
 
     #[test]
-    fn danger_full_access_requires_both_the_command_request_and_config_opt_in() {
-        let root = setup();
-        let output = longrun(&root)
-            .args([
-                OsString::from("run"),
-                OsString::from("--permission-profile"),
-                OsString::from(":danger-full-access"),
-                OsString::from("--"),
-                OsString::from("/bin/echo"),
-                OsString::from("should-not-run"),
-            ])
-            .output()
-            .expect("run longrun");
-
-        assert!(!output.status.success());
-        assert!(
-            String::from_utf8_lossy(&output.stderr)
-                .contains("danger-full-access requires explicit configuration")
-        );
-        fs::remove_dir_all(root).expect("cleanup");
-    }
-
-    #[test]
-    fn hook_requires_the_absolute_installed_binary_and_rejects_path_shadowing() {
-        let mut store = Store::open_in_memory().expect("store");
-        let expected = Path::new("/opt/longrun");
-        let signer = ReceiptSigner::new([7; 32]);
+    fn danger_full_access_requires_explicit_configuration() {
         let config = Config::default();
-
-        assert!(
-            handle_pre_tool_use(
-                &pre_tool_use("longrun submit -- /bin/echo shadowed"),
-                expected,
-                &mut store,
-                &signer,
-                &config,
-                1,
-            )
-            .expect("hook")
-            .is_none()
-        );
-        assert!(
-            handle_pre_tool_use(
-                &pre_tool_use("\"/tmp/longrun\" submit -- /bin/echo shadowed"),
-                expected,
-                &mut store,
-                &signer,
-                &config,
-                1,
-            )
-            .expect("hook")
-            .is_none()
-        );
-        assert!(
-            handle_pre_tool_use(
-                &pre_tool_use("longrun submit -- /bin/echo relative"),
-                Path::new("longrun"),
-                &mut store,
-                &signer,
-                &config,
-                1,
-            )
-            .expect("hook")
-            .is_none()
-        );
+        assert!(!config.permits_permission_profile(":danger-full-access"));
+        let config =
+            Config::from_toml("[execution]\nallow_danger_full_access = true").expect("config");
+        assert!(config.permits_permission_profile(":danger-full-access"));
     }
 
     #[test]
-    fn direct_arguments_with_shell_metacharacters_remain_literal() {
-        let root = setup();
-        let target_marker = root.join("metacharacter-ran");
-        let argument = format!("literal; touch {}", target_marker.display());
-        let output = longrun(&root)
-            .args([
-                OsString::from("run"),
-                OsString::from("--"),
-                OsString::from("/usr/bin/printf"),
-                OsString::from(&argument),
-            ])
-            .output()
-            .expect("run longrun");
-
-        assert_eq!(output.status.code(), Some(0));
-        assert_eq!(output.stdout, argument.as_bytes());
-        assert!(!target_marker.exists());
-        fs::remove_dir_all(root).expect("cleanup");
-    }
-
-    #[test]
-    fn consumed_receipt_nonce_cannot_be_replayed() {
-        let mut store = Store::open_in_memory().expect("store");
-        store
-            .consume_receipt_once("nonce")
-            .expect("first consumption");
-        assert!(store.consume_receipt_once("nonce").is_err());
+    fn environment_policy_hides_protected_values_by_default() {
+        let config = Config::default();
+        assert!(config.environment.is_protected("GITHUB_TOKEN"));
+        assert!(config.environment.is_protected("db_password"));
+        assert!(!config.environment.allows("GITHUB_TOKEN"));
+        assert!(!config.environment.allows("PATH"));
     }
 }

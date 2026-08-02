@@ -1,17 +1,5 @@
 {
   "hooks": {
-    "SessionStart": [
-      {
-        "matcher": "startup|resume|clear|compact",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "__LONGRUN_UNIX_SESSION_START__",
-            "commandWindows": "__LONGRUN_WINDOWS_SESSION_START__"
-          }
-        ]
-      }
-    ],
     "PreToolUse": [
       {
         "matcher": "^Bash$",
@@ -32,8 +20,9 @@
             "type": "command",
             "command": "__LONGRUN_UNIX_POST_TOOL_USE__",
             "commandWindows": "__LONGRUN_WINDOWS_POST_TOOL_USE__",
-            "timeout": 86400,
-            "statusMessage": "Longrun is waiting locally for the submitted command."
+            "timeout": 86410,
+            "additionalContextLimit": 0,
+            "statusMessage": "Longrun is waiting locally for the command."
           }
         ]
       }

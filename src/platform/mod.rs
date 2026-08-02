@@ -10,7 +10,7 @@ use tokio::process::{Child, Command};
 use crate::error::Result;
 
 #[cfg(unix)]
-pub struct ProcessTree;
+pub struct ProcessTree(unix::ProcessGroup);
 #[cfg(windows)]
 pub struct ProcessTree(windows::JobObject);
 #[cfg(not(any(unix, windows)))]
@@ -32,8 +32,8 @@ pub fn configure_command(_: &mut Command) -> Result<()> {
 }
 
 #[cfg(unix)]
-pub fn track_child(_: &Child) -> Result<ProcessTree> {
-    Ok(ProcessTree)
+pub fn track_child(child: &Child) -> Result<ProcessTree> {
+    Ok(ProcessTree(unix::track_child(child)?))
 }
 
 #[cfg(windows)]
@@ -47,22 +47,19 @@ pub fn track_child(_: &Child) -> Result<ProcessTree> {
 }
 
 #[cfg(unix)]
-pub async fn terminate(child: &mut Child, _: &ProcessTree, grace_ms: u64) -> Result<ExitStatus> {
-    unix::terminate(child, grace_ms).await
+pub async fn terminate(child: &mut Child, process_tree: &ProcessTree, grace_ms: u64) -> Result<()> {
+    unix::terminate(child, &process_tree.0, grace_ms).await
 }
 
 #[cfg(windows)]
-pub async fn terminate(
-    child: &mut Child,
-    process_tree: &ProcessTree,
-    grace_ms: u64,
-) -> Result<ExitStatus> {
+pub async fn terminate(child: &mut Child, process_tree: &ProcessTree, grace_ms: u64) -> Result<()> {
     windows::terminate(child, &process_tree.0, grace_ms).await
 }
 
 #[cfg(not(any(unix, windows)))]
-pub async fn terminate(child: &mut Child, _: &ProcessTree, _: u64) -> Result<ExitStatus> {
-    Ok(child.wait().await?)
+pub async fn terminate(child: &mut Child, _: &ProcessTree, _: u64) -> Result<()> {
+    let _ = child.kill().await;
+    Ok(())
 }
 
 pub async fn wait_for_shutdown() -> Result<()> {
@@ -82,4 +79,8 @@ pub async fn wait_for_shutdown() -> Result<()> {
         tokio::signal::ctrl_c().await?;
         Ok(())
     }
+}
+
+pub fn exit_code(status: ExitStatus) -> Option<i32> {
+    status.code()
 }

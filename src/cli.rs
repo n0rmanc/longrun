@@ -1,34 +1,27 @@
 use std::{
-    ffi::OsString,
+    ffi::{OsStr, OsString},
     io::{Read, Write},
     path::PathBuf,
     process::ExitCode,
 };
 
-use clap::{Args, Parser, Subcommand, ValueEnum};
-use time::{OffsetDateTime, format_description::well_known::Rfc3339};
-use uuid::Uuid;
+use clap::{Args, Parser, Subcommand};
 
 use crate::{
     config::Config,
     error::{Error, Result},
+    handoff::HandoffStore,
     hook::{
-        input::{PostToolUseInput, PreToolUseInput, SessionStartInput},
+        input::{PostToolUseInput, PreToolUseInput},
         post_tool_use::handle_post_tool_use,
         pre_tool_use::{handle_pre_tool_use, now_ms},
-        session_start::handle_session_start,
     },
-    integration::{codex, service as service_manager},
-    mcp,
-    output::read_log_chunk,
+    integration::codex,
     paths::AppPaths,
     protocol::{
-        EnvironmentPolicy, ExecutionMode, JobSpecification, NativeString, ShellMode, sha256_hex,
+        EnvironmentPolicy, NativeString, ResultEnvelope, TargetSpec, TerminalReason, sha256_hex,
     },
-    receipt::{ReceiptPayload, ReceiptSigner},
-    store::Store,
-    supervisor::{self, Supervisor},
-    worker::run_worker,
+    runner::{ExecutionMode, OutputMode, Runner},
 };
 
 #[derive(Debug, Parser)]
@@ -41,142 +34,61 @@ use crate::{
 pub struct Cli {
     #[arg(long, global = true, value_name = "FILE")]
     pub config: Option<PathBuf>,
+    #[arg(long, global = true, value_name = "DURATION")]
+    pub timeout: Option<String>,
+    #[arg(long, global = true, value_name = "NAME")]
+    pub permission_profile: Option<String>,
+    #[arg(long = "env-pass", global = true, value_name = "NAME")]
+    pub env_pass: Vec<String>,
+    #[arg(long, global = true)]
+    pub json: bool,
     #[command(subcommand)]
     pub command: Command,
 }
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    Run(ExecutionArgs),
-    Submit(SubmitArgs),
-    RunShell(ShellArgs),
-    SubmitShell(SubmitShellArgs),
-    Wait(JobArgs),
-    Status(JobArgs),
-    List(ListArgs),
-    Logs(LogsArgs),
-    Cancel(CancelArgs),
-    Gc(GcArgs),
     Init(InitArgs),
     Uninstall(UninstallArgs),
     Doctor(JsonArgs),
-    Daemon(DaemonArgs),
-    Service(ServiceArgs),
-    #[command(hide = true)]
-    Internal(InternalArgs),
     #[command(hide = true)]
     Hook(HookArgs),
-    Mcp,
-}
-
-impl Cli {
-    pub fn is_hook_receipt_submit(&self) -> bool {
-        matches!(
-            &self.command,
-            Command::Submit(SubmitArgs {
-                hook_receipt: Some(_),
-                ..
-            })
-        )
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum ModeArg {
-    Embedded,
-    Durable,
-}
-
-#[derive(Debug, Args)]
-pub struct ExecutionArgs {
-    #[arg(long, value_name = "DURATION")]
-    pub timeout: Option<String>,
-    #[arg(long, value_name = "NAME")]
-    pub permission_profile: Option<String>,
-    #[arg(long = "env-pass", value_name = "NAME")]
-    pub env_pass: Vec<String>,
-    #[arg(long, value_enum)]
-    pub mode: Option<ModeArg>,
-    #[arg(long)]
-    pub json: bool,
-    #[arg(
-        last = true,
-        required = true,
-        allow_hyphen_values = true,
-        value_name = "PROGRAM ARG..."
-    )]
-    pub program: Vec<OsString>,
+    #[command(hide = true)]
+    Internal(InternalArgs),
+    #[command(name = "run", hide = true)]
+    Run(RemovedArgs),
+    #[command(name = "run-shell", hide = true)]
+    RunShell(RemovedArgs),
+    #[command(name = "submit", hide = true)]
+    Submit(RemovedArgs),
+    #[command(name = "submit-shell", hide = true)]
+    SubmitShell(RemovedArgs),
+    #[command(name = "wait", hide = true)]
+    Wait(RemovedArgs),
+    #[command(name = "status", hide = true)]
+    Status(RemovedArgs),
+    #[command(name = "list", hide = true)]
+    List(RemovedArgs),
+    #[command(name = "logs", hide = true)]
+    Logs(RemovedArgs),
+    #[command(name = "cancel", hide = true)]
+    Cancel(RemovedArgs),
+    #[command(name = "gc", hide = true)]
+    Gc(RemovedArgs),
+    #[command(name = "daemon", hide = true)]
+    Daemon(RemovedArgs),
+    #[command(name = "service", hide = true)]
+    Service(RemovedArgs),
+    #[command(name = "mcp", hide = true)]
+    Mcp(RemovedArgs),
+    #[command(external_subcommand)]
+    Target(Vec<OsString>),
 }
 
 #[derive(Debug, Args)]
-pub struct SubmitArgs {
-    #[command(flatten)]
-    pub execution: ExecutionArgs,
-    #[arg(long, hide = true, value_name = "TOKEN", allow_hyphen_values = true)]
-    pub hook_token: Option<String>,
-    #[arg(long, hide = true, value_name = "RECEIPT")]
-    pub hook_receipt: Option<String>,
-}
-
-#[derive(Debug, Args)]
-pub struct ShellArgs {
-    #[arg(long, value_name = "SCRIPT")]
-    pub script: String,
-    #[arg(long, value_name = "DURATION")]
-    pub timeout: Option<String>,
-    #[arg(long, value_name = "NAME")]
-    pub permission_profile: Option<String>,
-    #[arg(long)]
-    pub json: bool,
-}
-
-#[derive(Debug, Args)]
-pub struct SubmitShellArgs {
-    #[command(flatten)]
-    pub shell: ShellArgs,
-    #[arg(long, hide = true, value_name = "TOKEN")]
-    pub hook_token: Option<String>,
-}
-
-#[derive(Debug, Args)]
-pub struct JobArgs {
-    pub job_id: Uuid,
-    #[arg(long)]
-    pub json: bool,
-}
-
-#[derive(Debug, Args)]
-pub struct ListArgs {
-    #[arg(long)]
-    pub state: Option<String>,
-    #[arg(long)]
-    pub json: bool,
-}
-
-#[derive(Debug, Args)]
-pub struct LogsArgs {
-    pub job_id: Uuid,
-    #[arg(long)]
-    pub follow: bool,
-    #[arg(long)]
-    pub stderr: bool,
-}
-
-#[derive(Debug, Args)]
-pub struct CancelArgs {
-    pub job_id: Uuid,
-    #[arg(long, value_name = "DURATION")]
-    pub grace: Option<String>,
-    #[arg(long)]
-    pub json: bool,
-}
-
-#[derive(Debug, Args)]
-pub struct GcArgs {
-    #[arg(long)]
-    pub dry_run: bool,
-    #[arg(long)]
-    pub json: bool,
+pub struct RemovedArgs {
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    pub args: Vec<OsString>,
 }
 
 #[derive(Debug, Args)]
@@ -206,27 +118,6 @@ pub struct JsonArgs {
 }
 
 #[derive(Debug, Args)]
-pub struct DaemonArgs {
-    #[arg(long)]
-    pub foreground: bool,
-}
-
-#[derive(Debug, Args)]
-pub struct ServiceArgs {
-    #[command(subcommand)]
-    pub command: ServiceCommand,
-}
-
-#[derive(Debug, Subcommand)]
-pub enum ServiceCommand {
-    Install,
-    Uninstall,
-    Start,
-    Stop,
-    Status,
-}
-
-#[derive(Debug, Args)]
 pub struct InternalArgs {
     #[command(subcommand)]
     pub command: InternalCommand,
@@ -234,12 +125,9 @@ pub struct InternalArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum InternalCommand {
-    Worker {
-        job_id: Uuid,
+    Receipt {
         #[arg(long, hide = true)]
-        state_dir: Option<PathBuf>,
-        #[arg(long, hide = true)]
-        log_dir: Option<PathBuf>,
+        handoff_id: String,
     },
 }
 
@@ -264,311 +152,157 @@ pub struct CodexHookArgs {
 pub enum CodexHookCommand {
     PreToolUse,
     PostToolUse,
-    SessionStart,
+}
+
+impl Cli {
+    pub fn is_receipt(&self) -> bool {
+        matches!(
+            &self.command,
+            Command::Internal(InternalArgs {
+                command: InternalCommand::Receipt { .. }
+            })
+        )
+    }
 }
 
 pub async fn dispatch(
     cli: Cli,
     paths: &AppPaths,
     config: &Config,
-    config_path: &std::path::Path,
+    _config_path: &std::path::Path,
 ) -> Result<ExitCode> {
+    let globals = GlobalsForTarget {
+        timeout: cli.timeout,
+        permission_profile: cli.permission_profile,
+        env_pass: cli.env_pass,
+    };
     match cli.command {
-        Command::Submit(arguments) => submit(arguments, paths, config),
-        Command::SubmitShell(arguments) => submit_shell(arguments, paths, config),
-        Command::Hook(arguments) => hook(arguments, paths, config).await,
-        Command::Run(arguments) => run(arguments, paths, config).await,
-        Command::RunShell(arguments) => run_shell(arguments, paths, config).await,
-        Command::Internal(arguments) => internal(arguments, paths, config).await,
-        Command::Wait(arguments) => wait(arguments, paths).await,
-        Command::Status(arguments) => status(arguments, paths).await,
-        Command::List(arguments) => list(arguments, paths).await,
-        Command::Logs(arguments) => logs(arguments, paths).await,
-        Command::Cancel(arguments) => cancel(arguments, paths, config).await,
-        Command::Gc(arguments) => gc(arguments, paths, config).await,
-        Command::Init(arguments) => init(arguments, paths),
-        Command::Uninstall(arguments) => uninstall(arguments, paths),
-        Command::Doctor(arguments) => doctor(arguments, paths, config).await,
-        Command::Mcp => {
-            mcp::run(paths, config).await?;
+        Command::Target(words) => {
+            let target = target_from_words(words, &globals, config)?;
+            execute_target(&target, paths, config, cli.json).await
+        }
+        Command::Init(arguments) => {
+            let report = codex::init(paths, &std::env::current_exe()?, arguments.repair)?;
+            if arguments.json {
+                serde_json::to_writer(std::io::stdout(), &report)?;
+                std::io::stdout().write_all(b"\n")?;
+            } else {
+                println!(
+                    "Installed {} at {}. Review and trust the generated hooks in Codex with /hooks.",
+                    report.plugin_selector,
+                    report.generated_root.display()
+                );
+            }
             Ok(ExitCode::SUCCESS)
         }
-        Command::Daemon(arguments) => daemon(arguments, paths, config, config_path).await,
-        Command::Service(arguments) => service_command(arguments, paths, config_path).await,
-    }
-}
-
-fn init(arguments: InitArgs, paths: &AppPaths) -> Result<ExitCode> {
-    let report = codex::init(paths, &std::env::current_exe()?, arguments.repair)?;
-    if arguments.json {
-        serde_json::to_writer(std::io::stdout(), &report)?;
-        std::io::stdout().write_all(b"\n")?;
-    } else {
-        println!(
-            "Installed {} at {}. Review and trust the generated hooks in Codex with /hooks.",
-            report.plugin_selector,
-            report.generated_root.display()
-        );
-    }
-    Ok(ExitCode::SUCCESS)
-}
-
-fn uninstall(arguments: UninstallArgs, paths: &AppPaths) -> Result<ExitCode> {
-    let report = codex::uninstall(paths)?;
-    if arguments.purge_data {
-        match std::fs::remove_dir_all(&paths.data_dir) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.into()),
-        }
-    }
-    if arguments.json {
-        serde_json::to_writer(
-            std::io::stdout(),
-            &serde_json::json!({
-                "generated_root": report.generated_root,
-                "removed_files": report.removed_files,
-                "purged_data": arguments.purge_data,
-            }),
-        )?;
-        std::io::stdout().write_all(b"\n")?;
-    } else {
-        println!(
-            "Uninstalled Longrun Codex integration (removed {} generated files).",
-            report.removed_files
-        );
-    }
-    Ok(ExitCode::SUCCESS)
-}
-
-async fn doctor(arguments: JsonArgs, paths: &AppPaths, config: &Config) -> Result<ExitCode> {
-    let report = codex::doctor(paths, config).await;
-    codex::write_doctor(&report, arguments.json)?;
-    Ok(if report.healthy {
-        ExitCode::SUCCESS
-    } else {
-        ExitCode::from(1)
-    })
-}
-
-async fn status(arguments: JobArgs, paths: &AppPaths) -> Result<ExitCode> {
-    let status = match supervisor::status(paths, arguments.job_id).await {
-        Ok(status) => status,
-        Err(error) if supervisor_offline(&error) => {
-            Store::open(paths.state_dir.join("longrun.sqlite"))?.status(arguments.job_id)?
-        }
-        Err(error) => return Err(error),
-    };
-    write_status(&status, arguments.json)?;
-    Ok(ExitCode::SUCCESS)
-}
-
-async fn list(arguments: ListArgs, paths: &AppPaths) -> Result<ExitCode> {
-    let state = arguments.state.as_deref().map(str::parse).transpose()?;
-    let jobs = match supervisor::list(paths, state).await {
-        Ok(jobs) => jobs,
-        Err(error) if supervisor_offline(&error) => {
-            Store::open(paths.state_dir.join("longrun.sqlite"))?.list(state)?
-        }
-        Err(error) => return Err(error),
-    };
-    if arguments.json {
-        serde_json::to_writer(std::io::stdout(), &jobs)?;
-        std::io::stdout().write_all(b"\n")?;
-    } else {
-        for job in jobs {
-            println!(
-                "{}\t{}\t{}",
-                job.job_id,
-                job.execution_state.as_str(),
-                job.delivery_state.as_str()
-            );
-        }
-    }
-    Ok(ExitCode::SUCCESS)
-}
-
-async fn wait(arguments: JobArgs, paths: &AppPaths) -> Result<ExitCode> {
-    match supervisor::wait(paths, arguments.job_id).await {
-        Ok(status) => {
-            write_status(&status, arguments.json)?;
-            return Ok(status
-                .result
-                .as_ref()
-                .map_or(ExitCode::from(70), result_exit_code));
-        }
-        Err(error) if !supervisor_offline(&error) => return Err(error),
-        Err(_) => {}
-    }
-    loop {
-        let status =
-            Store::open(paths.state_dir.join("longrun.sqlite"))?.status(arguments.job_id)?;
-        if status.execution_state.is_terminal() {
-            write_status(&status, arguments.json)?;
-            return Ok(status
-                .result
-                .as_ref()
-                .map_or(ExitCode::from(70), result_exit_code));
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
-}
-
-async fn logs(arguments: LogsArgs, paths: &AppPaths) -> Result<ExitCode> {
-    let suffix = if arguments.stderr { "stderr" } else { "stdout" };
-    let path = paths
-        .log_dir
-        .join(format!("{}.{}.log", arguments.job_id, suffix));
-    let mut offset = 0_u64;
-    loop {
-        let (bytes, next_offset, at_end, terminal) =
-            match supervisor::logs(paths, arguments.job_id, arguments.stderr, offset).await {
-                Ok(chunk) => (chunk.bytes, chunk.next_offset, chunk.at_end, chunk.terminal),
-                Err(error) if supervisor_offline(&error) => {
-                    let chunk = read_log_chunk(&path, offset, 64 * 1024).await?;
-                    let terminal = Store::open(paths.state_dir.join("longrun.sqlite"))?
-                        .status(arguments.job_id)?
-                        .execution_state
-                        .is_terminal()
-                        && chunk.at_end;
-                    (chunk.bytes, chunk.next_offset, chunk.at_end, terminal)
+        Command::Uninstall(arguments) => {
+            let report = codex::uninstall(paths)?;
+            if arguments.purge_data {
+                match std::fs::remove_dir_all(&paths.data_dir) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error.into()),
                 }
-                Err(error) => return Err(error),
-            };
-        std::io::stdout().write_all(&bytes)?;
-        offset = next_offset;
-        if (!arguments.follow && at_end) || terminal {
-            return Ok(ExitCode::SUCCESS);
+            }
+            if arguments.json {
+                serde_json::to_writer(
+                    std::io::stdout(),
+                    &serde_json::json!({
+                        "generated_root": report.generated_root,
+                        "removed_files": report.removed_files,
+                        "purged_data": arguments.purge_data,
+                    }),
+                )?;
+                std::io::stdout().write_all(b"\n")?;
+            } else {
+                println!(
+                    "Uninstalled Longrun Codex integration (removed {} generated files).",
+                    report.removed_files
+                );
+            }
+            Ok(ExitCode::SUCCESS)
         }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
-}
-
-async fn cancel(arguments: CancelArgs, paths: &AppPaths, config: &Config) -> Result<ExitCode> {
-    let grace_ms = arguments
-        .grace
-        .as_deref()
-        .map(parse_duration_ms)
-        .transpose()?
-        .unwrap_or(config.execution.termination_grace_ms);
-    let requested = match supervisor::cancel(paths, arguments.job_id, grace_ms).await {
-        Ok(requested) => requested,
-        Err(error) if supervisor_offline(&error) => Store::open(
-            paths.state_dir.join("longrun.sqlite"),
-        )?
-        .request_cancellation(arguments.job_id, grace_ms, now_ms()?)?,
-        Err(error) => return Err(error),
-    };
-    if arguments.json {
-        serde_json::to_writer(
-            std::io::stdout(),
-            &serde_json::json!({
-                "job_id": arguments.job_id,
-                "cancellation_requested": requested,
-            }),
-        )?;
-        std::io::stdout().write_all(b"\n")?;
-    } else if requested {
-        println!("Cancellation requested for {}", arguments.job_id);
-    } else {
-        println!("Job {} is already terminal or cancelling", arguments.job_id);
-    }
-    Ok(ExitCode::SUCCESS)
-}
-
-async fn gc(arguments: GcArgs, paths: &AppPaths, config: &Config) -> Result<ExitCode> {
-    let job_ids = match supervisor::gc(paths, arguments.dry_run).await {
-        Ok(job_ids) => job_ids,
-        Err(error) if supervisor_offline(&error) => {
-            Store::open(paths.state_dir.join("longrun.sqlite"))?.gc(
-                &paths.log_dir,
-                now_ms()?,
-                config.retention.max_age_days,
-                config.retention.max_log_bytes,
-                arguments.dry_run,
-            )?
+        Command::Doctor(arguments) => {
+            let report = codex::doctor(paths, config).await;
+            codex::write_doctor(&report, arguments.json)?;
+            Ok(if report.healthy {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::from(1)
+            })
         }
-        Err(error) => return Err(error),
-    };
-    if arguments.json {
-        serde_json::to_writer(
-            std::io::stdout(),
-            &serde_json::json!({
-                "dry_run": arguments.dry_run,
-                "job_ids": job_ids,
-            }),
-        )?;
-        std::io::stdout().write_all(b"\n")?;
-    } else if arguments.dry_run {
-        println!("Would remove {} job(s)", job_ids.len());
-    } else {
-        println!("Removed {} job(s)", job_ids.len());
+        Command::Hook(arguments) => hook(arguments, paths, config).await,
+        Command::Internal(arguments) => internal(arguments, paths).await,
+        Command::Run(_)
+        | Command::RunShell(_)
+        | Command::Submit(_)
+        | Command::SubmitShell(_)
+        | Command::Wait(_)
+        | Command::Status(_)
+        | Command::List(_)
+        | Command::Logs(_)
+        | Command::Cancel(_)
+        | Command::Gc(_)
+        | Command::Daemon(_)
+        | Command::Service(_)
+        | Command::Mcp(_) => Err(Error::InvalidInput(
+            "removed command; use `longrun -- PROGRAM ARG...` (or `rtk longrun -- PROGRAM ARG...`)"
+                .into(),
+        )),
     }
-    Ok(ExitCode::SUCCESS)
 }
 
-fn supervisor_offline(error: &Error) -> bool {
-    matches!(
-        error,
-        Error::Io(error)
-            if matches!(
-                error.kind(),
-                std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
-            )
-    )
-}
-
-fn write_status(status: &crate::store::JobStatus, json: bool) -> Result<()> {
-    if json {
-        serde_json::to_writer(std::io::stdout(), status)?;
-        std::io::stdout().write_all(b"\n")?;
-    } else {
-        println!(
-            "Job: {}\nExecution: {}\nDelivery: {}",
-            status.job_id,
-            status.execution_state.as_str(),
-            status.delivery_state.as_str()
-        );
-    }
-    Ok(())
-}
-
-async fn run(arguments: ExecutionArgs, paths: &AppPaths, config: &Config) -> Result<ExitCode> {
-    let cwd = NativeString::from_os_string(std::env::current_dir()?.into_os_string());
-    let program = NativeString::from_os_string(
-        arguments
-            .program
-            .first()
-            .cloned()
-            .ok_or_else(|| Error::InvalidInput("missing program".into()))?,
+pub fn target_from_words(
+    words: Vec<OsString>,
+    globals: &GlobalsForTarget,
+    config: &Config,
+) -> Result<TargetSpec> {
+    let cwd = NativeString::from_os_string(
+        std::fs::canonicalize(std::env::current_dir()?)?.into_os_string(),
     );
-    let args = arguments
-        .program
+    target_from_words_at_cwd(words, globals, config, cwd, now_ms()?)
+}
+
+pub fn target_from_words_at_cwd(
+    mut words: Vec<OsString>,
+    globals: &GlobalsForTarget,
+    config: &Config,
+    cwd: NativeString,
+    created_at_ms: i64,
+) -> Result<TargetSpec> {
+    if words.first().is_some_and(|word| word == OsStr::new("--")) {
+        words.remove(0);
+    }
+    let program = words
+        .first()
+        .cloned()
+        .ok_or_else(|| Error::InvalidInput("missing target program".into()))?;
+    let args = words
         .into_iter()
         .skip(1)
         .map(NativeString::from_os_string)
         .collect::<Vec<_>>();
-    let mode = arguments
-        .mode
-        .map_or(ExecutionMode::Embedded, |mode| match mode {
-            ModeArg::Embedded => ExecutionMode::Embedded,
-            ModeArg::Durable => ExecutionMode::Durable,
-        });
-    let timeout_ms = arguments
+    let timeout_ms = globals
         .timeout
         .as_deref()
         .map(parse_duration_ms)
         .transpose()?
         .unwrap_or(config.execution.timeout_ms);
-    let permission_profile = arguments
+    let permission_profile = globals
         .permission_profile
+        .clone()
         .unwrap_or_else(|| config.execution.permission_profile.clone());
+    if !config.permits_permission_profile(&permission_profile) {
+        return Err(Error::Denied(
+            "danger-full-access requires explicit configuration".into(),
+        ));
+    }
     let environment_policy = EnvironmentPolicy {
         pass: config
             .environment
             .pass
             .iter()
-            .chain(arguments.env_pass.iter())
+            .chain(globals.env_pass.iter())
             .cloned()
             .collect(),
         deny_patterns: config.environment.deny_patterns.clone(),
@@ -581,427 +315,75 @@ async fn run(arguments: ExecutionArgs, paths: &AppPaths, config: &Config) -> Res
         &permission_profile,
         &environment_policy,
     ))?);
-    let job = JobSpecification {
+    Ok(TargetSpec {
         protocol_version: crate::protocol::PROTOCOL_VERSION,
-        job_id: Uuid::now_v7(),
-        program,
+        program: NativeString::from_os_string(program),
         args,
         cwd,
-        execution_mode: mode,
-        shell_mode: ShellMode::Direct,
         timeout_ms,
         permission_profile,
         environment_policy,
-        created_at_ms: now_ms()?,
+        created_at_ms,
         command_hash,
-    };
-    if mode == ExecutionMode::Durable {
-        execute_durable(job, paths, arguments.json).await
-    } else {
-        execute_direct(job, paths, config, arguments.json).await
-    }
+    })
 }
 
-async fn run_shell(arguments: ShellArgs, paths: &AppPaths, config: &Config) -> Result<ExitCode> {
-    if !config.execution.allow_shell {
-        return Err(Error::Denied(
-            "shell execution requires execution.allow_shell = true".into(),
-        ));
-    }
-    let cwd = NativeString::from_os_string(std::env::current_dir()?.into_os_string());
-    let program = NativeString {
-        encoding: crate::protocol::NativeEncoding::Utf8,
-        value: "longrun-shell".into(),
-    };
-    let args = vec![NativeString {
-        encoding: crate::protocol::NativeEncoding::Utf8,
-        value: arguments.script,
-    }];
-    let timeout_ms = arguments
-        .timeout
-        .as_deref()
-        .map(parse_duration_ms)
-        .transpose()?
-        .unwrap_or(config.execution.timeout_ms);
-    let permission_profile = arguments
-        .permission_profile
-        .unwrap_or_else(|| config.execution.permission_profile.clone());
-    let environment_policy = EnvironmentPolicy {
-        pass: config.environment.pass.clone(),
-        deny_patterns: config.environment.deny_patterns.clone(),
-    };
-    let command_hash = sha256_hex(&serde_json::to_vec(&(
-        &program,
-        &args,
-        &cwd,
-        timeout_ms,
-        &permission_profile,
-        &environment_policy,
-    ))?);
-    let job = JobSpecification {
-        protocol_version: crate::protocol::PROTOCOL_VERSION,
-        job_id: Uuid::now_v7(),
-        program,
-        args,
-        cwd,
-        execution_mode: ExecutionMode::Embedded,
-        shell_mode: ShellMode::ExplicitShell,
-        timeout_ms,
-        permission_profile,
-        environment_policy,
-        created_at_ms: now_ms()?,
-        command_hash,
-    };
-    execute_direct(job, paths, config, arguments.json).await
+#[derive(Debug, Clone, Default)]
+pub struct GlobalsForTarget {
+    pub timeout: Option<String>,
+    pub permission_profile: Option<String>,
+    pub env_pass: Vec<String>,
 }
 
-async fn execute_direct(
-    job: JobSpecification,
+async fn execute_target(
+    target: &TargetSpec,
     paths: &AppPaths,
     config: &Config,
     json: bool,
 ) -> Result<ExitCode> {
-    let database = paths.state_dir.join("longrun.sqlite");
-    Store::open(&database)?.create_job(&job)?;
-    let result = run_worker(job.job_id, &database, config, paths).await?;
-    let mut store = Store::open(&database)?;
-    store.transition_delivery(job.job_id, crate::protocol::DeliveryState::HookLeased)?;
-    store.transition_delivery(job.job_id, crate::protocol::DeliveryState::DeliveredInTurn)?;
-    render_direct_result(&result, json).await
-}
-
-async fn execute_durable(job: JobSpecification, paths: &AppPaths, json: bool) -> Result<ExitCode> {
-    supervisor::submit(paths, &job).await?;
-    let status = supervisor::wait(paths, job.job_id).await?;
-    let result = status
-        .result
-        .ok_or_else(|| Error::Unavailable("durable worker completed without a result".into()))?;
-    let mut store = Store::open(paths.state_dir.join("longrun.sqlite"))?;
-    store.transition_delivery(job.job_id, crate::protocol::DeliveryState::HookLeased)?;
-    store.transition_delivery(job.job_id, crate::protocol::DeliveryState::DeliveredInTurn)?;
-    render_direct_result(&result, json).await
-}
-
-async fn internal(arguments: InternalArgs, paths: &AppPaths, config: &Config) -> Result<ExitCode> {
-    match arguments.command {
-        InternalCommand::Worker {
-            job_id,
-            state_dir,
-            log_dir,
-        } => {
-            let mut worker_paths = paths.clone();
-            match (state_dir, log_dir) {
-                (Some(state_dir), Some(log_dir)) => {
-                    worker_paths.state_dir = state_dir;
-                    worker_paths.log_dir = log_dir;
-                }
-                (None, None) => {}
-                _ => {
-                    return Err(Error::InvalidInput(
-                        "internal worker requires both --state-dir and --log-dir".into(),
-                    ));
-                }
-            }
-            let result = run_worker(
-                job_id,
-                &worker_paths.state_dir.join("longrun.sqlite"),
-                config,
-                &worker_paths,
-            )
-            .await?;
-            Ok(result_exit_code(&result))
-        }
-    }
-}
-
-async fn daemon(
-    _arguments: DaemonArgs,
-    paths: &AppPaths,
-    config: &Config,
-    config_path: &std::path::Path,
-) -> Result<ExitCode> {
-    let worker_path = std::env::var_os("PATH")
-        .ok_or_else(|| Error::Unavailable("PATH is unavailable for Longrun workers".into()))?;
-    Supervisor::new(
-        paths.clone(),
-        config,
-        std::env::current_exe()?,
-        config_path.into(),
-        worker_path,
-    )?
-    .run()
-    .await?;
-    Ok(ExitCode::SUCCESS)
-}
-
-async fn service_command(
-    arguments: ServiceArgs,
-    paths: &AppPaths,
-    config_path: &std::path::Path,
-) -> Result<ExitCode> {
-    match arguments.command {
-        ServiceCommand::Install => {
-            service_manager::install(
-                paths,
-                &std::env::current_exe()?,
-                &absolute_path(config_path)?,
-            )?;
-            println!("Installed Longrun durable service.");
-        }
-        ServiceCommand::Uninstall => {
-            service_manager::uninstall(paths)?;
-            println!("Uninstalled Longrun durable service.");
-        }
-        ServiceCommand::Start => {
-            service_manager::start(paths)?;
-            println!("Started Longrun durable service.");
-        }
-        ServiceCommand::Stop => {
-            #[cfg(windows)]
-            if service_manager::status(paths)?.installed {
-                match supervisor::shutdown(paths).await {
-                    Ok(()) => {}
-                    Err(error) if supervisor_offline(&error) => {}
-                    Err(error) => return Err(error),
-                }
-            }
-            #[cfg(not(windows))]
-            service_manager::stop(paths)?;
-            println!("Stopped Longrun durable service.");
-        }
-        ServiceCommand::Status => {
-            let status = service_manager::status(paths)?;
-            #[cfg(windows)]
-            let status = service_manager::ServiceStatus {
-                installed: status.installed,
-                running: status.installed && supervisor::healthy(paths).await.unwrap_or(false),
-            };
-            println!(
-                "Longrun durable service: {}",
-                if status.running {
-                    "running"
-                } else if status.installed {
-                    "installed but stopped"
-                } else {
-                    "not installed"
-                }
-            );
-        }
-    }
-    Ok(ExitCode::SUCCESS)
-}
-
-fn absolute_path(path: &std::path::Path) -> Result<PathBuf> {
-    if path.is_absolute() {
-        Ok(path.into())
-    } else {
-        Ok(std::env::current_dir()?.join(path))
-    }
-}
-
-async fn render_direct_result(result: &crate::protocol::JobResult, json: bool) -> Result<ExitCode> {
+    let result = Runner::new()
+        .execute(
+            target,
+            config,
+            paths,
+            ExecutionMode::Direct,
+            if json {
+                OutputMode::Capture
+            } else {
+                OutputMode::Passthrough
+            },
+        )
+        .await?;
     if json {
-        serde_json::to_writer(std::io::stdout(), result)?;
+        serde_json::to_writer(std::io::stdout(), &result)?;
         std::io::stdout().write_all(b"\n")?;
-    } else {
-        std::io::stdout().write_all(&tokio::fs::read(result.stdout_log.to_os_string()?).await?)?;
-        std::io::stderr().write_all(&tokio::fs::read(result.stderr_log.to_os_string()?).await?)?;
     }
-    Ok(result_exit_code(result))
+    Ok(result_exit_code(&result))
 }
 
-fn result_exit_code(result: &crate::protocol::JobResult) -> ExitCode {
-    match result.terminal_state {
-        crate::protocol::ExecutionState::Succeeded => ExitCode::SUCCESS,
-        crate::protocol::ExecutionState::Failed => {
-            ExitCode::from(result.exit_code.unwrap_or(70).clamp(1, 255) as u8)
+fn result_exit_code(result: &ResultEnvelope) -> ExitCode {
+    match result.terminal_reason {
+        TerminalReason::Exited => {
+            ExitCode::from(result.exit_code.unwrap_or(70).clamp(0, 255) as u8)
         }
-        crate::protocol::ExecutionState::TimedOut => ExitCode::from(124),
-        crate::protocol::ExecutionState::Cancelled => ExitCode::from(130),
-        _ => ExitCode::from(70),
+        TerminalReason::TimedOut => ExitCode::from(124),
+        TerminalReason::Cancelled | TerminalReason::OwnerShutdown => ExitCode::from(130),
+        TerminalReason::SpawnFailed => ExitCode::from(127),
     }
 }
 
-fn submit(arguments: SubmitArgs, paths: &AppPaths, config: &Config) -> Result<ExitCode> {
-    let SubmitArgs {
-        execution,
-        hook_token,
-        hook_receipt,
-    } = arguments;
-    if let Some(receipt) = hook_receipt {
-        if !receipt.starts_with("LONGRUN_RECEIPT_HANDLE_V1 ") {
-            return Err(Error::Denied("hook receipts are hook-owned.".into()));
+async fn internal(arguments: InternalArgs, paths: &AppPaths) -> Result<ExitCode> {
+    match arguments.command {
+        InternalCommand::Receipt { handoff_id } => {
+            let receipt = HandoffStore::new(paths)
+                .arm(&handoff_id, now_ms()?)?
+                .ok_or_else(|| {
+                    Error::Denied("handoff is missing, expired, or already armed".into())
+                })?;
+            println!("{receipt}");
+            Ok(ExitCode::SUCCESS)
         }
-        std::io::stdout().write_all(receipt.as_bytes())?;
-        std::io::stdout().write_all(b"\n")?;
-        return Ok(ExitCode::SUCCESS);
     }
-    let token =
-        hook_token.ok_or_else(|| Error::Denied("`submit` requires a hook-issued token".into()))?;
-    let cwd = NativeString::from_os_string(std::env::current_dir()?.into_os_string());
-    let job = job_from_execution_args(execution, cwd, config, now_ms()?)?;
-    issue_submission(token, job, paths)
-}
-
-pub(crate) fn job_from_execution_args(
-    arguments: ExecutionArgs,
-    cwd: NativeString,
-    config: &Config,
-    created_at_ms: i64,
-) -> Result<JobSpecification> {
-    let program = NativeString::from_os_string(
-        arguments
-            .program
-            .first()
-            .cloned()
-            .ok_or_else(|| Error::InvalidInput("missing submitted program".into()))?,
-    );
-    let args = arguments
-        .program
-        .into_iter()
-        .skip(1)
-        .map(NativeString::from_os_string)
-        .collect::<Vec<_>>();
-    let permission_profile = arguments
-        .permission_profile
-        .unwrap_or_else(|| config.execution.permission_profile.clone());
-    if !config.permits_permission_profile(&permission_profile) {
-        return Err(Error::Denied(
-            "danger-full-access requires explicit configuration".into(),
-        ));
-    }
-    Ok(JobSpecification {
-        protocol_version: crate::protocol::PROTOCOL_VERSION,
-        job_id: Uuid::now_v7(),
-        program,
-        args,
-        cwd,
-        execution_mode: arguments
-            .mode
-            .map_or(ExecutionMode::Embedded, |mode| match mode {
-                ModeArg::Embedded => ExecutionMode::Embedded,
-                ModeArg::Durable => ExecutionMode::Durable,
-            }),
-        shell_mode: ShellMode::Direct,
-        timeout_ms: arguments
-            .timeout
-            .as_deref()
-            .map(parse_duration_ms)
-            .transpose()?
-            .unwrap_or(config.execution.timeout_ms),
-        permission_profile,
-        environment_policy: EnvironmentPolicy {
-            pass: config
-                .environment
-                .pass
-                .iter()
-                .chain(arguments.env_pass.iter())
-                .cloned()
-                .collect(),
-            deny_patterns: config.environment.deny_patterns.clone(),
-        },
-        created_at_ms,
-        command_hash: String::new(),
-    })
-}
-
-fn submit_shell(arguments: SubmitShellArgs, paths: &AppPaths, config: &Config) -> Result<ExitCode> {
-    let SubmitShellArgs { shell, hook_token } = arguments;
-    let token = hook_token
-        .ok_or_else(|| Error::Denied("`submit-shell` requires a hook-issued token".into()))?;
-    let cwd = NativeString::from_os_string(std::env::current_dir()?.into_os_string());
-    let job = job_from_shell_args(shell, cwd, config, now_ms()?)?;
-    issue_submission(token, job, paths)
-}
-
-pub(crate) fn job_from_shell_args(
-    arguments: ShellArgs,
-    cwd: NativeString,
-    config: &Config,
-    created_at_ms: i64,
-) -> Result<JobSpecification> {
-    if !config.execution.allow_shell {
-        return Err(Error::Denied(
-            "shell execution requires execution.allow_shell = true".into(),
-        ));
-    }
-    let permission_profile = arguments
-        .permission_profile
-        .unwrap_or_else(|| config.execution.permission_profile.clone());
-    if !config.permits_permission_profile(&permission_profile) {
-        return Err(Error::Denied(
-            "danger-full-access requires explicit configuration".into(),
-        ));
-    }
-    Ok(JobSpecification {
-        protocol_version: crate::protocol::PROTOCOL_VERSION,
-        job_id: Uuid::now_v7(),
-        program: NativeString {
-            encoding: crate::protocol::NativeEncoding::Utf8,
-            value: "longrun-shell".into(),
-        },
-        args: vec![NativeString {
-            encoding: crate::protocol::NativeEncoding::Utf8,
-            value: arguments.script,
-        }],
-        cwd,
-        execution_mode: ExecutionMode::Embedded,
-        shell_mode: ShellMode::ExplicitShell,
-        timeout_ms: arguments
-            .timeout
-            .as_deref()
-            .map(parse_duration_ms)
-            .transpose()?
-            .unwrap_or(config.execution.timeout_ms),
-        permission_profile,
-        environment_policy: EnvironmentPolicy {
-            pass: config.environment.pass.clone(),
-            deny_patterns: config.environment.deny_patterns.clone(),
-        },
-        created_at_ms,
-        command_hash: String::new(),
-    })
-}
-
-fn issue_submission(
-    token: String,
-    mut job: JobSpecification,
-    paths: &AppPaths,
-) -> Result<ExitCode> {
-    let mut store = Store::open(paths.state_dir.join("longrun.sqlite"))?;
-    let pending = store.claim_pending_by_token(&sha256_hex(token.as_bytes()), now_ms()?)?;
-    job.command_hash = pending.command_hash.clone();
-    if !pending.matches_job(&job) {
-        return Err(Error::Denied(
-            "submitted command does not match the hook-approved request".into(),
-        ));
-    }
-    let signer = ReceiptSigner::load_or_create(&paths.state_dir.join("receipt.key"))?;
-    let issued = OffsetDateTime::now_utc();
-    let expires = OffsetDateTime::from_unix_timestamp_nanos(
-        i128::from(pending.expires_at_ms).saturating_mul(1_000_000),
-    )
-    .map_err(|error| Error::Unavailable(format!("invalid pending expiry: {error}")))?;
-    if expires <= issued {
-        return Err(Error::Denied("hook token has expired".into()));
-    }
-    let payload = ReceiptPayload::from_job(
-        job,
-        pending.session_id,
-        pending.turn_id,
-        pending.tool_use_id,
-        issued
-            .format(&Rfc3339)
-            .map_err(|error| Error::Unavailable(format!("cannot format receipt time: {error}")))?,
-        expires.format(&Rfc3339).map_err(|error| {
-            Error::Unavailable(format!("cannot format receipt expiry: {error}"))
-        })?,
-        ReceiptSigner::random_nonce()?,
-    );
-    let line = signer.issue(&payload)?.to_line();
-    std::io::stdout().write_all(line.as_bytes())?;
-    std::io::stdout().write_all(b"\n")?;
-    Ok(ExitCode::SUCCESS)
 }
 
 async fn hook(arguments: HookArgs, paths: &AppPaths, config: &Config) -> Result<ExitCode> {
@@ -1011,13 +393,10 @@ async fn hook(arguments: HookArgs, paths: &AppPaths, config: &Config) -> Result<
                 let mut source = String::new();
                 std::io::stdin().read_to_string(&mut source)?;
                 let input: PreToolUseInput = serde_json::from_str(&source)?;
-                let mut store = Store::open(paths.state_dir.join("longrun.sqlite"))?;
-                let signer = ReceiptSigner::load_or_create(&paths.state_dir.join("receipt.key"))?;
                 if let Some(output) = handle_pre_tool_use(
                     &input,
                     &std::env::current_exe()?,
-                    &mut store,
-                    &signer,
+                    paths,
                     config,
                     now_ms()?,
                 )? {
@@ -1031,35 +410,10 @@ async fn hook(arguments: HookArgs, paths: &AppPaths, config: &Config) -> Result<
                 std::io::stdin().read_to_string(&mut source)?;
                 let input: PostToolUseInput = serde_json::from_str(&source)?;
                 if let Some(output) =
-                    handle_post_tool_use(&input, paths, config, &crate::runner::Runner::new())
-                        .await?
+                    handle_post_tool_use(&input, paths, config, &Runner::new()).await?
                 {
                     serde_json::to_writer(std::io::stdout(), &output)?;
                     std::io::stdout().write_all(b"\n")?;
-                }
-                Ok(ExitCode::SUCCESS)
-            }
-            CodexHookCommand::SessionStart => {
-                let mut source = String::new();
-                std::io::stdin().read_to_string(&mut source)?;
-                let input: SessionStartInput = serde_json::from_str(&source)?;
-                if let Some(delivery) = handle_session_start(
-                    &input,
-                    &std::env::current_exe()?,
-                    paths,
-                    config,
-                    now_ms()?,
-                )? {
-                    let mut stdout = std::io::stdout();
-                    serde_json::to_writer(&mut stdout, &delivery.output)?;
-                    stdout.write_all(b"\n")?;
-                    stdout.flush()?;
-                    Store::open(paths.state_dir.join("longrun.sqlite"))?.finish_delivery(
-                        delivery.job_id,
-                        delivery.lease_id,
-                        crate::protocol::DeliveryState::DeliveredOnStart,
-                        now_ms()?,
-                    )?;
                 }
                 Ok(ExitCode::SUCCESS)
             }
@@ -1067,7 +421,15 @@ async fn hook(arguments: HookArgs, paths: &AppPaths, config: &Config) -> Result<
     }
 }
 
-fn parse_duration_ms(value: &str) -> Result<u64> {
+pub fn globals_from_cli(cli: &Cli) -> GlobalsForTarget {
+    GlobalsForTarget {
+        timeout: cli.timeout.clone(),
+        permission_profile: cli.permission_profile.clone(),
+        env_pass: cli.env_pass.clone(),
+    }
+}
+
+pub(crate) fn parse_duration_ms(value: &str) -> Result<u64> {
     let (amount, multiplier) = match value.chars().last() {
         Some('s') => (&value[..value.len() - 1], 1_000),
         Some('m') => (&value[..value.len() - 1], 60_000),

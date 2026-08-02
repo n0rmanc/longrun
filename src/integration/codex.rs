@@ -1,5 +1,4 @@
 use std::{
-    ffi::OsString,
     fs,
     io::Write,
     path::{Component, Path, PathBuf},
@@ -15,8 +14,6 @@ use crate::{
     error::{Error, Result},
     paths::AppPaths,
     protocol::sha256_hex,
-    store::Store,
-    supervisor,
 };
 
 const MARKETPLACE_NAME: &str = "longrun-local";
@@ -93,7 +90,7 @@ pub fn init(paths: &AppPaths, executable: &Path, repaired: bool) -> Result<InitR
     }
     let manifest_hash = hash_assets(&assets);
     let inventory = InstallationInventory {
-        version: 1,
+        version: 2,
         integration: "codex".into(),
         binary_path: utf8_path(&executable)?.into(),
         marketplace_name: MARKETPLACE_NAME.into(),
@@ -140,13 +137,13 @@ pub fn uninstall(paths: &AppPaths) -> Result<UninstallReport> {
     run_codex_allow_absent(&[
         "plugin".into(),
         "remove".into(),
-        inventory.plugin_selector.into(),
+        inventory.plugin_selector.clone().into(),
     ])?;
     run_codex_allow_absent(&[
         "plugin".into(),
         "marketplace".into(),
         "remove".into(),
-        inventory.marketplace_name.into(),
+        inventory.marketplace_name.clone().into(),
     ])?;
 
     let mut removed_files = 0;
@@ -175,7 +172,7 @@ pub fn uninstall(paths: &AppPaths) -> Result<UninstallReport> {
 
 pub async fn doctor(paths: &AppPaths, config: &Config) -> DoctorReport {
     let executable = match std::env::current_exe().and_then(fs::canonicalize) {
-        Ok(path) => Some(path),
+        Ok(path) => path,
         Err(error) => {
             return DoctorReport {
                 healthy: false,
@@ -188,8 +185,7 @@ pub async fn doctor(paths: &AppPaths, config: &Config) -> DoctorReport {
             };
         }
     };
-    let executable = executable.expect("set above");
-    let mut checks = vec![
+    let checks = vec![
         check(
             "executable",
             executable.is_file(),
@@ -203,31 +199,16 @@ pub async fn doctor(paths: &AppPaths, config: &Config) -> DoctorReport {
             ),
         ),
         state_directory_check(paths),
-        state_store_check(paths),
+        handoff_directory_check(paths),
         codex_version_check(),
         codex_plugin_commands_check(),
         codex_plugin_activation_check(),
         integration_check(paths, &executable),
         hooks_check(paths, &executable),
         sandbox_profile_check(config),
+        timeout_margin_check(config),
         platform_process_control_check(),
     ];
-    checks.push(match supervisor::healthy(paths).await {
-        Ok(true) => check("supervisor", true, false, "running".into()),
-        Ok(false) => check("supervisor", false, false, "not running (optional)".into()),
-        Err(error) => check(
-            "supervisor",
-            false,
-            false,
-            format!("unavailable (optional): {error}"),
-        ),
-    });
-    checks.push(check(
-        "hook_trust",
-        false,
-        false,
-        "review and trust Longrun hooks in Codex with /hooks".into(),
-    ));
     let healthy = checks.iter().all(|check| !check.required || check.ok);
     DoctorReport { healthy, checks }
 }
@@ -288,14 +269,6 @@ fn render_hooks(executable: &Path) -> Result<String> {
         &mut hooks,
         &[
             (
-                "__LONGRUN_UNIX_SESSION_START__",
-                hook_command(executable, "session-start", false),
-            ),
-            (
-                "__LONGRUN_WINDOWS_SESSION_START__",
-                hook_command(executable, "session-start", true),
-            ),
-            (
                 "__LONGRUN_UNIX_PRE_TOOL_USE__",
                 hook_command(executable, "pre-tool-use", false),
             ),
@@ -342,7 +315,11 @@ fn replace_template_strings(value: &mut Value, replacements: &[(&str, String)]) 
 
 fn hook_command(executable: &str, event: &str, windows: bool) -> String {
     let executable = shell_quote(executable, windows);
-    format!("{executable} hook codex {event}")
+    if windows {
+        format!("{executable} hook codex {event}")
+    } else {
+        format!("exec {executable} hook codex {event}")
+    }
 }
 
 fn shell_quote(value: &str, windows: bool) -> String {
@@ -436,7 +413,7 @@ fn prune_empty_parents(root: &Path, path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn run_codex(arguments: &[OsString]) -> Result<()> {
+fn run_codex(arguments: &[std::ffi::OsString]) -> Result<()> {
     let output = Command::new("codex")
         .args(arguments)
         .output()
@@ -447,7 +424,7 @@ fn run_codex(arguments: &[OsString]) -> Result<()> {
     Err(codex_failure(arguments, &output))
 }
 
-fn run_codex_allow_absent(arguments: &[OsString]) -> Result<()> {
+fn run_codex_allow_absent(arguments: &[std::ffi::OsString]) -> Result<()> {
     let output = Command::new("codex")
         .args(arguments)
         .output()
@@ -459,7 +436,7 @@ fn run_codex_allow_absent(arguments: &[OsString]) -> Result<()> {
     }
 }
 
-fn codex_failure(arguments: &[OsString], output: &std::process::Output) -> Error {
+fn codex_failure(arguments: &[std::ffi::OsString], output: &std::process::Output) -> Error {
     let detail = String::from_utf8_lossy(&output.stderr);
     let detail = detail.trim();
     let detail = if detail.is_empty() {
@@ -504,57 +481,14 @@ fn check(name: &'static str, ok: bool, required: bool, detail: String) -> Doctor
     }
 }
 
-fn state_store_check(paths: &AppPaths) -> DoctorCheck {
-    let database = paths.state_dir.join("longrun.sqlite");
-    match Store::open(&database).and_then(|store| {
-        let version = store.schema_version()?;
-        let journal_mode = store.journal_mode()?;
-        let integrity = store.integrity_check()?;
-        Ok((version, journal_mode, integrity))
-    }) {
-        Ok((version, journal_mode, true)) if journal_mode.eq_ignore_ascii_case("wal") => check(
-            "state_store",
-            true,
-            true,
-            format!("schema {version}, journal {journal_mode}"),
-        ),
-        Ok((version, journal_mode, integrity)) => check(
-            "state_store",
-            false,
-            true,
-            format!(
-                "schema {version}, expected WAL and integrity ok; journal={journal_mode}, integrity={integrity}"
-            ),
-        ),
-        Err(error) => check("state_store", false, true, error.to_string()),
-    }
-}
-
 fn state_directory_check(paths: &AppPaths) -> DoctorCheck {
     match fs::metadata(&paths.state_dir) {
-        Ok(metadata) if metadata.is_dir() => {
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-
-                let mode = metadata.permissions().mode() & 0o777;
-                check(
-                    "state_directory",
-                    mode & 0o077 == 0,
-                    true,
-                    format!("{} permissions {:o}", paths.state_dir.display(), mode),
-                )
-            }
-            #[cfg(not(unix))]
-            {
-                check(
-                    "state_directory",
-                    true,
-                    true,
-                    format!("{} exists", paths.state_dir.display()),
-                )
-            }
-        }
+        Ok(metadata) if metadata.is_dir() => check(
+            "state_directory",
+            private_directory(&metadata),
+            true,
+            format!("{} exists", paths.state_dir.display()),
+        ),
         Ok(_) => check(
             "state_directory",
             false,
@@ -563,6 +497,36 @@ fn state_directory_check(paths: &AppPaths) -> DoctorCheck {
         ),
         Err(error) => check("state_directory", false, true, error.to_string()),
     }
+}
+
+fn handoff_directory_check(paths: &AppPaths) -> DoctorCheck {
+    match fs::metadata(&paths.handoff_dir) {
+        Ok(metadata) if metadata.is_dir() => check(
+            "handoff_directory",
+            private_directory(&metadata),
+            true,
+            format!("{} is private", paths.handoff_dir.display()),
+        ),
+        Ok(_) => check(
+            "handoff_directory",
+            false,
+            true,
+            format!("{} is not a directory", paths.handoff_dir.display()),
+        ),
+        Err(error) => check("handoff_directory", false, true, error.to_string()),
+    }
+}
+
+#[cfg(unix)]
+fn private_directory(metadata: &fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    metadata.permissions().mode() & 0o077 == 0
+}
+
+#[cfg(not(unix))]
+fn private_directory(_: &fs::Metadata) -> bool {
+    true
 }
 
 fn codex_version_check() -> DoctorCheck {
@@ -632,6 +596,21 @@ fn sandbox_profile_check(config: &Config) -> DoctorCheck {
     }
 }
 
+fn timeout_margin_check(config: &Config) -> DoctorCheck {
+    match config.validate() {
+        Ok(()) => check(
+            "timeout_margin",
+            true,
+            true,
+            format!(
+                "PostToolUse timeout {} ms covers target and cleanup margins",
+                config.execution.post_tool_use_timeout_ms
+            ),
+        ),
+        Err(error) => check("timeout_margin", false, true, error.to_string()),
+    }
+}
+
 fn platform_process_control_check() -> DoctorCheck {
     #[cfg(unix)]
     {
@@ -639,7 +618,7 @@ fn platform_process_control_check() -> DoctorCheck {
             "platform_process_control",
             true,
             true,
-            "Unix process-group termination is available".into(),
+            "Unix process-group termination is available; hard owner death is best effort".into(),
         )
     }
     #[cfg(windows)]
@@ -700,18 +679,17 @@ fn hooks_check(paths: &AppPaths, executable: &Path) -> DoctorCheck {
     let path = paths.integration_dir.join("plugins/longrun/hooks.json");
     let expected = match utf8_path(executable) {
         Ok(executable) => [
-            hook_command(executable, "session-start", cfg!(windows)),
             hook_command(executable, "pre-tool-use", cfg!(windows)),
             hook_command(executable, "post-tool-use", cfg!(windows)),
         ],
         Err(error) => return check("hooks", false, true, error.to_string()),
     };
     match fs::read_to_string(path) {
-        Ok(hooks) if hooks_include(&hooks, &expected) => check(
+        Ok(hooks) if hooks_include(&hooks, &expected) && !hooks.contains("SessionStart") => check(
             "hooks",
             true,
             true,
-            "absolute SessionStart, PreToolUse, and PostToolUse hooks match this binary".into(),
+            "absolute PreToolUse and PostToolUse hooks match this binary".into(),
         ),
         Ok(_) => check(
             "hooks",
@@ -757,11 +735,22 @@ mod tests {
     use super::{hook_command, hooks_include, render_hooks, render_skill_for};
 
     #[test]
+    fn rendered_hooks_use_only_the_two_active_wait_hooks() {
+        let hooks = render_hooks(Path::new("/opt/longrun")).expect("render hooks");
+        let expected = [
+            hook_command("/opt/longrun", "pre-tool-use", false),
+            hook_command("/opt/longrun", "post-tool-use", false),
+        ];
+        assert!(hooks_include(&hooks, &expected));
+        assert!(!hooks.contains("SessionStart"));
+        assert!(hooks.contains("\"additionalContextLimit\": 0"));
+    }
+
+    #[test]
     fn rendered_hooks_match_verbatim_windows_paths_after_json_escaping() {
         let executable = r"\\?\C:\Longrun\longrun.exe";
         let hooks = render_hooks(Path::new(executable)).expect("render hooks");
         let expected = [
-            hook_command(executable, "session-start", true),
             hook_command(executable, "pre-tool-use", true),
             hook_command(executable, "post-tool-use", true),
         ];
@@ -775,6 +764,6 @@ mod tests {
             true,
         )
         .expect("render skill");
-        assert!(skill.contains(r#""C:\Program Files\Longrun\"bin\longrun.exe" submit"#));
+        assert!(skill.contains(r#""C:\Program Files\Longrun\"bin\longrun.exe""#));
     }
 }

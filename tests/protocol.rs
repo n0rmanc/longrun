@@ -1,10 +1,8 @@
 use std::ffi::OsString;
 
 use longrun::protocol::{
-    DeliveryState, ExecutionState, IpcMethod, IpcRequest, NativeEncoding, NativeString,
-    PROTOCOL_VERSION,
+    EnvironmentPolicy, HandoffState, NativeEncoding, NativeString, PROTOCOL_VERSION, TargetSpec,
 };
-use uuid::Uuid;
 
 #[test]
 fn utf8_arguments_round_trip_without_reencoding() {
@@ -12,7 +10,7 @@ fn utf8_arguments_round_trip_without_reencoding() {
 
     assert_eq!(value.encoding, NativeEncoding::Utf8);
     assert_eq!(value.to_os_string().expect("decode"), "測試 --literal");
-    assert_eq!(PROTOCOL_VERSION, 1);
+    assert_eq!(PROTOCOL_VERSION, 2);
 }
 
 #[cfg(unix)]
@@ -37,29 +35,20 @@ fn windows_utf16_arguments_round_trip_without_loss() {
 }
 
 #[test]
-fn execution_and_delivery_terminal_states_cannot_reopen() {
-    assert!(ExecutionState::Accepted.can_transition_to(ExecutionState::Starting));
-    assert!(ExecutionState::Starting.can_transition_to(ExecutionState::Running));
-    assert!(ExecutionState::Running.can_transition_to(ExecutionState::Succeeded));
-    assert!(!ExecutionState::Succeeded.can_transition_to(ExecutionState::Running));
-    assert!(ExecutionState::Succeeded.is_terminal());
-
-    assert!(DeliveryState::Undelivered.can_transition_to(DeliveryState::HookLeased));
-    assert!(DeliveryState::HookLeased.can_transition_to(DeliveryState::Undelivered));
-    assert!(DeliveryState::HookLeased.can_transition_to(DeliveryState::DeliveredInTurn));
-    assert!(!DeliveryState::DeliveredInTurn.can_transition_to(DeliveryState::Undelivered));
-}
-
-#[test]
-fn ipc_messages_are_versioned_json_domain_values() {
-    let request = IpcRequest {
+fn target_spec_serializes_native_arguments_and_policy() {
+    let target = TargetSpec {
         protocol_version: PROTOCOL_VERSION,
-        request_id: Uuid::now_v7(),
-        method: IpcMethod::Status,
-        params: serde_json::json!({"job_id": "example"}),
+        program: NativeString::from_os_string("gh".into()),
+        args: vec![NativeString::from_os_string("run".into())],
+        cwd: NativeString::from_os_string("/tmp".into()),
+        timeout_ms: 1_000,
+        permission_profile: ":workspace".into(),
+        environment_policy: EnvironmentPolicy::default(),
+        created_at_ms: 1,
+        command_hash: "sha256:test".into(),
     };
-
-    let json = serde_json::to_value(&request).expect("serialize");
-    assert_eq!(json["protocol_version"], 1);
-    assert_eq!(json["method"], "status");
+    let json = serde_json::to_value(&target).expect("serialize target");
+    assert_eq!(json["protocol_version"], 2);
+    assert_eq!(json["program"]["value"], "gh");
+    assert_eq!(HandoffState::Prepared, HandoffState::Prepared);
 }

@@ -3,7 +3,7 @@ use std::{io, os::unix::process::CommandExt};
 use nix::{
     errno::Errno,
     sys::signal::{Signal, killpg},
-    unistd::{Pid, setpgid},
+    unistd::{Pid, getpgid, setpgid},
 };
 use tokio::{
     process::{Child, Command},
@@ -11,6 +11,11 @@ use tokio::{
 };
 
 use crate::error::{Error, Result};
+
+#[derive(Debug, Clone, Copy)]
+pub struct ProcessGroup {
+    pgid: Pid,
+}
 
 pub fn configure_command(command: &mut Command) -> Result<()> {
     unsafe {
@@ -22,19 +27,32 @@ pub fn configure_command(command: &mut Command) -> Result<()> {
     Ok(())
 }
 
-pub async fn terminate(child: &mut Child, grace_ms: u64) -> Result<std::process::ExitStatus> {
-    let group = child
+pub fn track_child(child: &Child) -> Result<ProcessGroup> {
+    let pid = child
         .id()
-        .map(|pid| Pid::from_raw(pid as i32))
-        .ok_or_else(|| Error::Unavailable("child exited before process group cleanup".into()))?;
-    signal_group(group, Signal::SIGTERM)?;
+        .ok_or_else(|| Error::Unavailable("child exited before process-group tracking".into()))?;
+    let pid = Pid::from_raw(pid as i32);
+    Ok(ProcessGroup {
+        pgid: getpgid(Some(pid)).unwrap_or(pid),
+    })
+}
+
+pub async fn terminate(
+    child: &mut Child,
+    process_group: &ProcessGroup,
+    grace_ms: u64,
+) -> Result<()> {
+    signal_group(process_group.pgid, Signal::SIGTERM)?;
     match timeout(Duration::from_millis(grace_ms), child.wait()).await {
-        Ok(status) => Ok(status?),
+        Ok(status) => {
+            let _ = status?;
+        }
         Err(_) => {
-            signal_group(group, Signal::SIGKILL)?;
-            Ok(child.wait().await?)
+            signal_group(process_group.pgid, Signal::SIGKILL)?;
+            let _ = child.wait().await?;
         }
     }
+    Ok(())
 }
 
 fn signal_group(group: Pid, signal: Signal) -> Result<()> {

@@ -2,10 +2,11 @@
 
 Run finite, long-running commands without model polling.
 
-Longrun is a standalone Rust CLI. Its optional Codex integration is a thin
-adapter over the same local runtime: it creates a receipt from a verified Bash
-submission, waits locally in `PostToolUse`, and returns the final bounded
-result to the originating turn.
+Longrun is a small Rust CLI. Its Codex integration is a thin two-hook adapter:
+`PreToolUse` replaces the requested command with a fast receipt, and
+`PostToolUse` runs the original command locally until it finishes, then returns
+the bounded result to the same turn. There is no worker, daemon, job database,
+automatic retry, or persisted result.
 
 ## Install
 
@@ -15,9 +16,9 @@ Use a published, checksummed release on macOS or Linux:
 curl -fsSL https://raw.githubusercontent.com/n0rmanc/longrun/main/install.sh | sh
 ```
 
-The installer selects the supported native archive, downloads its adjacent
-SHA-256 file, verifies it, and installs `longrun` to `~/.local/bin` by
-default. Add that directory to `PATH` if necessary.
+The installer selects the supported native archive, verifies its adjacent
+SHA-256 file, and installs `longrun` to `~/.local/bin` by default. Add that
+directory to `PATH` if necessary.
 
 Or install the same published archive through Homebrew:
 
@@ -43,10 +44,7 @@ longrun init --codex --repair
 longrun doctor --json
 ```
 
-`init --codex --repair` refreshes Codex integration after the executable has
-been replaced. Review and trust Longrun's hooks in `/hooks` if Codex prompts.
-
-For a Homebrew installation, re-install the current formula, then repair:
+For Homebrew:
 
 ```sh
 brew reinstall --formula https://raw.githubusercontent.com/n0rmanc/longrun/main/Formula/longrun.rb
@@ -54,8 +52,7 @@ longrun init --codex --repair
 longrun doctor --json
 ```
 
-For a source installation, update the checkout and install it to the same
-prefix before repairing Codex integration:
+For a source installation:
 
 ```sh
 git pull --ff-only
@@ -72,23 +69,40 @@ longrun init --codex
 longrun doctor
 ```
 
-`init` renders a local `longrun-local` marketplace under Longrun's private
-data directory, installs `longrun@longrun-local` through the Codex CLI, and
-uses the resolved absolute path of the executable in every generated hook.
-Review and trust the hooks in Codex with `/hooks`.
+`init` installs the local `longrun` plugin through Codex, renders absolute
+`PreToolUse` and `PostToolUse` hook commands, and installs the skill. Review
+and trust the hooks in Codex with `/hooks`.
 
-If project instructions require RTK, Codex may submit through the one supported
-wrapper:
+Use the same generic command surface from a terminal, CI, or Codex:
 
 ```sh
-rtk longrun submit -- PROGRAM ARG...
+longrun PROGRAM ARG...
+rtk longrun PROGRAM ARG...
 ```
 
-Longrun's `PreToolUse` hook validates that exact form and rewrites it to the
-installed absolute Longrun binary before issuing a receipt. Other wrappers are
-not supported.
+Examples:
 
-To invoke the skill explicitly in Codex, use:
+```sh
+rtk longrun gh run watch RUN_ID --repo OWNER/REPO --exit-status
+
+rtk longrun oracle --engine browser --model gpt-5-pro \
+  -p "TASK" --file "src/**"
+
+rtk longrun cargo test --locked
+```
+
+`gh run watch` and Oracle may perform their own network polling, but the Codex
+model does not need to poll. The command returns once the target exits, times
+out, or is cancelled. If the Codex turn is lost before delivery, rerun the
+command manually; Longrun does not keep a background result.
+
+Use `--` when the target program could be confused with a Longrun option:
+
+```sh
+longrun --timeout 30m -- gh run watch RUN_ID --repo OWNER/REPO --exit-status
+```
+
+To invoke the installed skill explicitly in Codex:
 
 ```text
 $longrun:longrun
@@ -106,27 +120,6 @@ Remove only Longrun-owned integration files and selectors:
 longrun uninstall --codex
 ```
 
-No background service is installed by `init`. Durable execution requires the
-explicit `longrun service install` action.
-
-## Commands
-
-```text
-longrun run -- PROGRAM ARG...
-longrun submit -- PROGRAM ARG...
-longrun status JOB_ID
-longrun wait JOB_ID
-longrun list
-longrun logs JOB_ID [--stderr] [--follow]
-longrun cancel JOB_ID [--grace DURATION]
-longrun gc [--dry-run]
-```
-
-Use `run` for human, script, and CI execution. Codex uses `submit`; only the
-internal worker can run its verified requested command. Direct argument mode
-is the default. `run-shell` and `submit-shell` require
-`execution.allow_shell = true`.
-
 ## Configuration
 
 Longrun reads `config.toml` from its platform configuration directory, or a
@@ -136,10 +129,15 @@ path passed with `--config`.
 [execution]
 timeout_ms = 86400000
 permission_profile = ":workspace"
-allow_shell = false
 allow_danger_full_access = false
+include_managed_config = true
 termination_grace_ms = 5000
-concurrency = 32
+forced_cleanup_margin_ms = 2000
+result_serialization_margin_ms = 1000
+post_tool_use_timeout_ms = 86408000
+
+[handoff]
+ttl_ms = 300000
 
 [output]
 model_max_bytes = 32768
@@ -147,50 +145,36 @@ tail_bytes = 65536
 
 [environment]
 pass = []
-
-[recovery]
-auto_resume = false
-retry_budget = 3
-
-[retention]
-max_age_days = 30
-max_log_bytes = 10737418240
 ```
 
-`recovery.auto_resume` is disabled by default. When explicitly enabled, it
-can invoke `codex exec resume` only to deliver a persisted result; it never
-re-runs the requested command.
-
-GitHub Actions waits and Oracle browser reviews need network access. Longrun's
-default `:workspace` profile does not grant it. Opt in before using either:
+GitHub Actions waits and Oracle browser reviews need network access. The
+default `:workspace` profile does not grant it. Opt in explicitly:
 
 ```toml
 [execution]
 allow_danger_full_access = true
 ```
 
-```sh
-longrun submit --permission-profile :danger-full-access -- \
-  gh run watch RUN_ID --repo OWNER/REPO --exit-status
+Then:
 
-longrun submit --permission-profile :danger-full-access -- \
-  oracle --engine browser --model gpt-5.6-sol --browser-thinking-time heavy \
-  -p "TASK" --file "src/**"
+```sh
+longrun --permission-profile :danger-full-access -- \
+  gh run watch RUN_ID --repo OWNER/REPO --exit-status
 ```
 
-## Security and recovery
+Longrun does not widen permissions automatically, and it does not support
+shell composition such as `;`, `|`, or `&&` in the Codex command form. Pass a
+program and native arguments instead.
 
-- Longrun runs direct program-and-argument jobs through `codex sandbox` with
-  the selected profile. It never widens permissions automatically; network
-  commands require the explicit `:danger-full-access` opt-in above.
-- Secret-like environment names are removed unless explicitly allowed in the
-  immutable job policy.
-- Full stdout and stderr remain local. Model-visible results contain bounded,
-  explicitly untrusted tails and local log paths.
-- Jobs execute at most once. Delivery can retry through the active hook,
-  SessionStart, or optional guarded resume without re-executing the command.
-- `longrun doctor` reports executable, local-state, Codex integration,
-  sandbox, and supervisor health.
+## Security and lifecycle
+
+- Codex-hook execution uses `codex sandbox` with the selected named profile.
+- Protected environment variables are removed unless explicitly allowed.
+- Output is captured with bounded tails, byte counts, hashes, and an
+  untrusted-output marker before it is returned to the model.
+- The ephemeral handoff is private, one-time, and removed after delivery.
+- No worker, supervisor, service, SQLite job store, recovery, or automatic
+  rerun is installed.
 
 ## Validate from source
 
@@ -200,5 +184,5 @@ cargo clippy --all-targets -- -D warnings
 cargo test --locked
 ```
 
-For the complete validation scenarios and architecture contracts, see
-[`specs/001-long-command-execution/quickstart.md`](specs/001-long-command-execution/quickstart.md).
+For the feature contract and acceptance scenarios, see
+[`specs/002-ephemeral-wait-proxy/quickstart.md`](specs/002-ephemeral-wait-proxy/quickstart.md).

@@ -107,12 +107,11 @@ mod codex {
         let mut expected_hooks: Value =
             serde_json::from_str(include_str!("../assets/codex/hooks.json")).expect("hook fixture");
         for (event, suffix) in [
-            ("SessionStart", "session-start"),
             ("PreToolUse", "pre-tool-use"),
             ("PostToolUse", "post-tool-use"),
         ] {
             let handler = &mut expected_hooks["hooks"][event][0]["hooks"][0];
-            handler["command"] = json!(format!("{unix} hook codex {suffix}"));
+            handler["command"] = json!(format!("exec {unix} hook codex {suffix}"));
             handler["commandWindows"] = json!(format!("\"{windows}\" hook codex {suffix}"));
         }
         assert_eq!(
@@ -120,10 +119,11 @@ mod codex {
             expected_hooks
         );
         assert!(hooks.contains(env!("CARGO_BIN_EXE_longrun")));
-        assert!(hooks.contains("session-start"));
+        assert!(!hooks.contains("SessionStart"));
         assert!(hooks.contains("pre-tool-use"));
         assert!(hooks.contains("post-tool-use"));
-        assert!(hooks.contains("\"timeout\": 86400"));
+        assert!(hooks.contains("\"timeout\": 86410"));
+        assert!(hooks.contains("\"additionalContextLimit\": 0"));
 
         let skill =
             fs::read_to_string(generated_root.join("plugins/longrun/skills/longrun/SKILL.md"))
@@ -135,7 +135,8 @@ mod codex {
         );
         assert!(skill.contains("without model polling"));
         assert!(skill.contains(env!("CARGO_BIN_EXE_longrun")));
-        assert!(skill.contains("rtk longrun submit"));
+        assert!(skill.contains("rtk longrun cargo test"));
+        assert!(!skill.contains("submit"));
         assert!(!skill.contains("__LONGRUN_EXECUTABLE__"));
 
         let codex_log = fs::read_to_string(&log).expect("codex log");
@@ -167,10 +168,10 @@ mod codex {
         .expect("skill");
         let command = skill
             .lines()
-            .find(|line| line.contains(" submit -- PROGRAM ARG..."))
+            .find(|line| line.contains(" PROGRAM ARG..."))
             .expect("submission command");
         let executable = fs::canonicalize(executable).expect("resolve quoted binary");
-        assert!(command.starts_with(&format!("'{}' submit", executable.display())));
+        assert!(command.starts_with(&format!("'{}'", executable.display())));
         assert!(
             Command::new("/bin/sh")
                 .args(["-n", "-c", command])
@@ -240,7 +241,7 @@ mod codex {
     }
 
     #[test]
-    fn doctor_reports_codex_plugin_hooks_sandbox_store_and_optional_supervisor() {
+    fn doctor_reports_codex_plugin_hooks_sandbox_and_timeout_margin() {
         let (root, log) = setup();
         json(&run(&root, &log, &["init", "--codex", "--json"]));
         let report = json(&run(&root, &log, &["doctor", "--json"]));
@@ -248,14 +249,14 @@ mod codex {
         for name in [
             "executable",
             "state_directory",
-            "state_store",
             "codex_version",
             "codex_plugin_commands",
             "codex_plugin_activation",
             "hooks",
             "sandbox_profile",
             "platform_process_control",
-            "supervisor",
+            "handoff_directory",
+            "timeout_margin",
         ] {
             assert!(
                 checks.iter().any(|check| check["name"] == name),

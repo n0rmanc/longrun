@@ -1,69 +1,51 @@
-use std::{io::SeekFrom, path::Path};
+use std::collections::VecDeque;
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use sha2::{Digest, Sha256};
-use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
-use crate::error::Result;
+use crate::{error::Result, protocol::CapturedOutput};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ByteTail {
-    pub bytes: Vec<u8>,
-    pub truncated: bool,
-    pub sha256: String,
+#[derive(Debug, Clone)]
+pub struct RollingOutput {
+    limit: usize,
+    total_bytes: u64,
+    bytes: VecDeque<u8>,
+    digest: Sha256,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LogChunk {
-    pub bytes: Vec<u8>,
-    pub next_offset: u64,
-    pub at_end: bool,
-}
-
-pub fn byte_tail(input: &[u8], limit: usize) -> ByteTail {
-    let start = input.len().saturating_sub(limit);
-    ByteTail {
-        bytes: input[start..].to_vec(),
-        truncated: start > 0,
-        sha256: format!("sha256:{:x}", Sha256::digest(input)),
-    }
-}
-
-pub fn render_untrusted(tail: &ByteTail) -> String {
-    let encoded = URL_SAFE_NO_PAD.encode(&tail.bytes);
-    format!(
-        "UNTRUSTED COMMAND OUTPUT (base64url; truncated={}):\n{}",
-        tail.truncated, encoded
-    )
-}
-
-pub async fn read_log_chunk(path: &Path, offset: u64, max_bytes: usize) -> Result<LogChunk> {
-    if max_bytes == 0 {
-        return Err(crate::error::Error::InvalidInput(
-            "log chunk size must be positive".into(),
-        ));
-    }
-    let mut file = match tokio::fs::File::open(path).await {
-        Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(LogChunk {
-                bytes: Vec::new(),
-                next_offset: 0,
-                at_end: true,
-            });
+impl RollingOutput {
+    pub fn new(limit: usize) -> Result<Self> {
+        if limit == 0 {
+            return Err(crate::error::Error::InvalidInput(
+                "output tail size must be positive".into(),
+            ));
         }
-        Err(error) => return Err(error.into()),
-    };
-    let length = file.metadata().await?.len();
-    let offset = offset.min(length);
-    file.seek(SeekFrom::Start(offset)).await?;
-    let mut bytes = vec![0; max_bytes];
-    let read = file.read(&mut bytes).await?;
-    bytes.truncate(read);
-    let next_offset = offset.saturating_add(read as u64);
-    Ok(LogChunk {
-        bytes,
-        next_offset,
-        at_end: next_offset >= length,
-    })
+        Ok(Self {
+            limit,
+            total_bytes: 0,
+            bytes: VecDeque::with_capacity(limit),
+            digest: Sha256::new(),
+        })
+    }
+
+    pub fn push(&mut self, bytes: &[u8]) {
+        self.total_bytes = self.total_bytes.saturating_add(bytes.len() as u64);
+        self.digest.update(bytes);
+        for byte in bytes {
+            if self.bytes.len() == self.limit {
+                self.bytes.pop_front();
+            }
+            self.bytes.push_back(*byte);
+        }
+    }
+
+    pub fn finish(self) -> CapturedOutput {
+        let tail = self.bytes.into_iter().collect::<Vec<_>>();
+        CapturedOutput {
+            total_bytes: self.total_bytes,
+            tail_base64url: URL_SAFE_NO_PAD.encode(&tail),
+            truncated: self.total_bytes > tail.len() as u64,
+            sha256: format!("sha256:{:x}", self.digest.finalize()),
+        }
+    }
 }

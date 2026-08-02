@@ -53,7 +53,7 @@ fn active_hook_waits_once_and_delivers_to_the_same_turn() {
         "tool_name": "Bash",
         "tool_input": {
             "command": format!(
-                "\"{}\" submit -- \"{}\" {} \"{}\"",
+                "\"{}\" -- \"{}\" {} \"{}\"",
                 env!("CARGO_BIN_EXE_longrun"),
                 fixture.display(),
                 duration_seconds,
@@ -77,8 +77,8 @@ fn active_hook_waits_once_and_delivers_to_the_same_turn() {
         .env("HOME", root.join("home"))
         .env("PATH", command_path(&root))
         .output()
-        .expect("run rewritten submit");
-    assert!(receipt.status.success(), "submit failed: {receipt:?}");
+        .expect("run rewritten receipt");
+    assert!(receipt.status.success(), "receipt failed: {receipt:?}");
 
     let post = json!({
         "session_id": "active-session",
@@ -97,7 +97,7 @@ fn active_hook_waits_once_and_delivers_to_the_same_turn() {
     assert!(post.status.success(), "post hook failed: {post:?}");
     assert!(
         issued.elapsed() >= Duration::from_secs(duration_seconds.saturating_sub(1)),
-        "PostToolUse returned before the submitted command finished"
+        "PostToolUse returned before the target command finished"
     );
     assert_eq!(fs::read_to_string(&starts).expect("start count"), "x");
     assert_eq!(
@@ -114,7 +114,7 @@ fn active_hook_waits_once_and_delivers_to_the_same_turn() {
     let context = output["hookSpecificOutput"]["additionalContext"]
         .as_str()
         .expect("completion context");
-    assert!(context.contains("State: Succeeded"));
+    assert!(context.contains("Terminal reason: Exited"));
     assert_eq!(bounded_stdout(context), b"DONE");
 
     fs::remove_dir_all(root).expect("cleanup");

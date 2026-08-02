@@ -22,7 +22,7 @@ async fn run() -> longrun::error::Result<ExitCode> {
         .config
         .clone()
         .unwrap_or_else(|| paths.config_dir.join("config.toml"));
-    let config = if cli.is_hook_receipt_submit() {
+    let config = if cli.is_receipt() {
         Config::default()
     } else {
         paths.ensure_private_state()?;

@@ -1,3 +1,1 @@
-{
-  "feature_directory": "specs/001-long-command-execution"
-}
+{"feature_directory":"specs/002-ephemeral-wait-proxy"}

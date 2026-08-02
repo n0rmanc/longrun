@@ -19,8 +19,6 @@ pub enum Error {
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
-    Sqlite(#[from] rusqlite::Error),
-    #[error(transparent)]
     Json(#[from] serde_json::Error),
 }
 
@@ -31,7 +29,7 @@ impl Error {
             Self::Denied(_) => ExitCode::from(77),
             Self::NotFound(_) => ExitCode::from(127),
             Self::Unavailable(_) => ExitCode::from(69),
-            Self::Io(_) | Self::Sqlite(_) | Self::Json(_) => ExitCode::from(70),
+            Self::Io(_) | Self::Json(_) => ExitCode::from(70),
         }
     }
 }

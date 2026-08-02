@@ -38,13 +38,6 @@ pub struct PostToolUseInput {
     pub tool_response: Value,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct SessionStartInput {
-    #[serde(flatten)]
-    pub common: CodexCommonInput,
-    pub source: String,
-}
-
 impl PreToolUseInput {
     pub fn bash_command(&self) -> Option<&str> {
         self.tool_input.get("command")?.as_str()

@@ -7,14 +7,17 @@ use crate::{
     protocol::default_deny_patterns,
 };
 
+const MAX_TIMEOUT_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
+const DEFAULT_HANDOFF_TTL_MS: u64 = 5 * 60 * 1_000;
+const MAX_HANDOFF_TTL_MS: u64 = 15 * 60 * 1_000;
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub struct Config {
     pub execution: ExecutionConfig,
+    pub handoff: HandoffConfig,
     pub output: OutputConfig,
     pub environment: EnvironmentConfig,
-    pub recovery: RecoveryConfig,
-    pub retention: RetentionConfig,
     pub diagnostics: DiagnosticsConfig,
 }
 
@@ -45,30 +48,45 @@ impl Config {
                 "execution.permission_profile must not be empty".into(),
             ));
         }
-        if self.execution.concurrency == 0 {
-            return Err(Error::Config(
-                "execution.concurrency must be positive".into(),
-            ));
-        }
         if self.execution.termination_grace_ms == 0 {
             return Err(Error::Config(
                 "execution.termination_grace_ms must be positive".into(),
             ));
         }
+        if self.execution.forced_cleanup_margin_ms == 0 {
+            return Err(Error::Config(
+                "execution.forced_cleanup_margin_ms must be positive".into(),
+            ));
+        }
+        if self.execution.result_serialization_margin_ms == 0 {
+            return Err(Error::Config(
+                "execution.result_serialization_margin_ms must be positive".into(),
+            ));
+        }
         if self.output.model_max_bytes == 0 || self.output.tail_bytes == 0 {
             return Err(Error::Config("output byte limits must be positive".into()));
         }
-        if self.recovery.retry_budget == 0 {
+        if self.handoff.ttl_ms == 0 || self.handoff.ttl_ms > MAX_HANDOFF_TTL_MS {
             return Err(Error::Config(
-                "recovery.retry_budget must be positive".into(),
+                "handoff.ttl_ms is outside the allowed range".into(),
             ));
         }
-        if self.retention.max_log_bytes == 0 {
-            return Err(Error::Config(
-                "retention.max_log_bytes must be positive".into(),
-            ));
+        let minimum_post_timeout = self.minimum_post_tool_use_timeout_ms()?;
+        if self.execution.post_tool_use_timeout_ms < minimum_post_timeout {
+            return Err(Error::Config(format!(
+                "execution.post_tool_use_timeout_ms must be at least {minimum_post_timeout} ms"
+            )));
         }
         Ok(())
+    }
+
+    pub fn minimum_post_tool_use_timeout_ms(&self) -> Result<u64> {
+        self.execution
+            .timeout_ms
+            .checked_add(self.execution.termination_grace_ms)
+            .and_then(|value| value.checked_add(self.execution.forced_cleanup_margin_ms))
+            .and_then(|value| value.checked_add(self.execution.result_serialization_margin_ms))
+            .ok_or_else(|| Error::Config("PostToolUse timeout arithmetic overflowed".into()))
     }
 
     pub fn permits_permission_profile(&self, profile: &str) -> bool {
@@ -76,34 +94,57 @@ impl Config {
     }
 }
 
-const MAX_TIMEOUT_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub struct ExecutionConfig {
     pub timeout_ms: u64,
     pub permission_profile: String,
-    pub allow_shell: bool,
     pub allow_danger_full_access: bool,
+    pub include_managed_config: bool,
     pub termination_grace_ms: u64,
-    pub concurrency: usize,
+    pub forced_cleanup_margin_ms: u64,
+    pub result_serialization_margin_ms: u64,
+    pub post_tool_use_timeout_ms: u64,
 }
 
 impl Default for ExecutionConfig {
     fn default() -> Self {
+        let timeout_ms = 24 * 60 * 60 * 1_000;
+        let termination_grace_ms = 5_000;
+        let forced_cleanup_margin_ms = 2_000;
+        let result_serialization_margin_ms = 1_000;
         Self {
-            timeout_ms: 24 * 60 * 60 * 1_000,
+            timeout_ms,
             permission_profile: ":workspace".into(),
-            allow_shell: false,
             allow_danger_full_access: false,
-            termination_grace_ms: 5_000,
-            concurrency: 32,
+            include_managed_config: true,
+            termination_grace_ms,
+            forced_cleanup_margin_ms,
+            result_serialization_margin_ms,
+            post_tool_use_timeout_ms: timeout_ms
+                + termination_grace_ms
+                + forced_cleanup_margin_ms
+                + result_serialization_margin_ms,
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
+pub struct HandoffConfig {
+    pub ttl_ms: u64,
+}
+
+impl Default for HandoffConfig {
+    fn default() -> Self {
+        Self {
+            ttl_ms: DEFAULT_HANDOFF_TTL_MS,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct OutputConfig {
     pub model_max_bytes: usize,
     pub tail_bytes: usize,
@@ -119,20 +160,10 @@ impl Default for OutputConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub struct EnvironmentConfig {
     pub pass: Vec<String>,
-    #[serde(default = "default_deny_patterns")]
     pub deny_patterns: Vec<String>,
-}
-
-impl Default for EnvironmentConfig {
-    fn default() -> Self {
-        Self {
-            pass: Vec::new(),
-            deny_patterns: default_deny_patterns(),
-        }
-    }
 }
 
 impl EnvironmentConfig {
@@ -149,40 +180,17 @@ impl EnvironmentConfig {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct RecoveryConfig {
-    pub auto_resume: bool,
-    pub retry_budget: u32,
-}
-
-impl Default for RecoveryConfig {
+impl Default for EnvironmentConfig {
     fn default() -> Self {
         Self {
-            auto_resume: false,
-            retry_budget: 3,
+            pass: Vec::new(),
+            deny_patterns: default_deny_patterns(),
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct RetentionConfig {
-    pub max_age_days: u32,
-    pub max_log_bytes: u64,
-}
-
-impl Default for RetentionConfig {
-    fn default() -> Self {
-        Self {
-            max_age_days: 30,
-            max_log_bytes: 10 * 1024 * 1024 * 1024,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub struct DiagnosticsConfig {
     pub log_level: String,
 }

@@ -1,8 +1,7 @@
-use std::{ffi::OsString, path::PathBuf, process::Stdio};
+use std::{ffi::OsString, process::Stdio};
 
-use base64::Engine;
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
     process::Command,
     time::{Duration, Instant, sleep},
 };
@@ -10,219 +9,241 @@ use tokio::{
 use crate::{
     config::Config,
     error::{Error, Result},
-    output::byte_tail,
+    output::RollingOutput,
     paths::AppPaths,
     platform,
-    protocol::{ExecutionState, JobResult, JobSpecification, NativeString, ShellMode},
-    store::Store,
+    protocol::{CapturedOutput, ResultEnvelope, TargetSpec, TerminalReason},
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecutionMode {
+    Direct,
+    CodexHook,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputMode {
+    Passthrough,
+    Capture,
+}
+
+#[derive(Debug, Clone, Default)]
 pub struct Runner {
-    sandbox_binary: OsString,
+    sandbox_binary: Option<OsString>,
 }
 
 impl Runner {
     pub fn new() -> Self {
-        Self {
-            sandbox_binary: "codex".into(),
-        }
+        Self::default()
     }
 
-    pub fn with_sandbox_binary(binary: PathBuf) -> Self {
+    pub fn with_sandbox_binary(binary: impl Into<OsString>) -> Self {
         Self {
-            sandbox_binary: binary.into_os_string(),
+            sandbox_binary: Some(binary.into()),
         }
     }
 
     pub async fn execute(
         &self,
-        job: &JobSpecification,
+        target: &TargetSpec,
         config: &Config,
-        paths: &AppPaths,
-    ) -> Result<JobResult> {
-        self.execute_with_cancellation(job, config, paths, None)
-            .await
-    }
-
-    pub async fn execute_with_cancellation(
-        &self,
-        job: &JobSpecification,
-        config: &Config,
-        paths: &AppPaths,
-        cancellation_database: Option<&std::path::Path>,
-    ) -> Result<JobResult> {
-        if !config.permits_permission_profile(&job.permission_profile) {
-            return Err(Error::Denied(
-                "danger-full-access requires explicit configuration".into(),
-            ));
-        }
-        let cwd = job.cwd.to_os_string()?;
-        let program = job.program.to_os_string()?;
-        let args = job
+        _paths: &AppPaths,
+        mode: ExecutionMode,
+        output_mode: OutputMode,
+    ) -> Result<ResultEnvelope> {
+        let cwd = target.cwd.to_os_string()?;
+        let program = target.program.to_os_string()?;
+        let args = target
             .args
             .iter()
-            .map(NativeString::to_os_string)
+            .map(|argument| argument.to_os_string())
             .collect::<Result<Vec<_>>>()?;
-        let (program, args) = command_for(job.shell_mode, program, args)?;
-        let stdout_path = paths.log_dir.join(format!("{}.stdout.log", job.job_id));
-        let stderr_path = paths.log_dir.join(format!("{}.stderr.log", job.job_id));
-        let started = Instant::now();
-        let mut command = Command::new(&self.sandbox_binary);
+
+        let (program, args, launcher) = match mode {
+            ExecutionMode::Direct => (program, args, None),
+            ExecutionMode::CodexHook => {
+                if !config.permits_permission_profile(&target.permission_profile) {
+                    return Err(Error::Denied(format!(
+                        "permission profile `{}` is not enabled in Longrun configuration",
+                        target.permission_profile
+                    )));
+                }
+                let sandbox = self
+                    .sandbox_binary
+                    .clone()
+                    .unwrap_or_else(|| OsString::from("codex"));
+                let mut sandbox_args = vec![
+                    OsString::from("sandbox"),
+                    OsString::from("-P"),
+                    target.permission_profile.clone().into(),
+                ];
+                if config.execution.include_managed_config {
+                    sandbox_args.push("--include-managed-config".into());
+                }
+                sandbox_args.extend([
+                    OsString::from("-C"),
+                    cwd.clone(),
+                    OsString::from("--"),
+                    program,
+                ]);
+                sandbox_args.extend(args);
+                (sandbox, sandbox_args, Some(true))
+            }
+        };
+
+        let mut command = Command::new(&program);
         command
-            .arg("sandbox")
-            .arg("-P")
-            .arg(&job.permission_profile)
-            .arg("-C")
-            .arg(&cwd)
-            .arg("--")
-            .arg(program)
-            .args(args)
+            .args(&args)
             .current_dir(&cwd)
             .env_clear()
+            .kill_on_drop(true)
+            .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        copy_safe_environment(&mut command, job);
+        if launcher.is_some() {
+            // `program` is the Codex launcher in this branch; target argv is
+            // already stored in `args`.
+        }
+        copy_safe_environment(&mut command, &target.environment_policy);
         platform::configure_command(&mut command)?;
+        let started = Instant::now();
         let mut child = command.spawn()?;
         let process_tree = match platform::track_child(&child) {
             Ok(process_tree) => process_tree,
             Err(error) => {
-                let _ = child.start_kill();
-                let _ = child.wait().await;
+                let _ = child.kill().await;
                 return Err(error);
             }
         };
         let stdout = child
             .stdout
             .take()
-            .ok_or_else(|| Error::Unavailable("sandbox stdout was not captured".into()))?;
+            .ok_or_else(|| Error::Unavailable("target stdout was not captured".into()))?;
         let stderr = child
             .stderr
             .take()
-            .ok_or_else(|| Error::Unavailable("sandbox stderr was not captured".into()))?;
-        let stdout_task = tokio::spawn(copy_stream(stdout, stdout_path.clone()));
-        let stderr_task = tokio::spawn(copy_stream(stderr, stderr_path.clone()));
-        let timeout = sleep(Duration::from_millis(job.timeout_ms));
+            .ok_or_else(|| Error::Unavailable("target stderr was not captured".into()))?;
+
+        let stdout_task = tokio::spawn(read_output(
+            stdout,
+            OutputStream::Stdout,
+            output_mode,
+            config.output.tail_bytes,
+        ));
+        let stderr_task = tokio::spawn(read_output(
+            stderr,
+            OutputStream::Stderr,
+            output_mode,
+            config.output.tail_bytes,
+        ));
+        let timeout = sleep(Duration::from_millis(target.timeout_ms));
         tokio::pin!(timeout);
         let shutdown = platform::wait_for_shutdown();
         tokio::pin!(shutdown);
-        let (state, exit_code) = loop {
-            tokio::select! {
-                status = child.wait() => {
-                    let status = status?;
-                    break (if status.success() { ExecutionState::Succeeded } else { ExecutionState::Failed }, status.code());
-                }
-                _ = &mut timeout => {
-                    let _ = platform::terminate(&mut child, &process_tree, config.execution.termination_grace_ms).await?;
-                    break (ExecutionState::TimedOut, None);
-                }
-                _ = sleep(Duration::from_millis(50)), if cancellation_database.is_some() => {
-                    let database = cancellation_database.expect("cancellation database is checked");
-                    if let Some(grace_ms) = Store::open(database)?.cancellation_grace(job.job_id)? {
-                        let _ = platform::terminate(&mut child, &process_tree, grace_ms).await?;
-                        break (ExecutionState::Cancelled, None);
-                    }
-                }
-                shutdown_result = &mut shutdown => {
-                    shutdown_result?;
-                    let _ = platform::terminate(&mut child, &process_tree, config.execution.termination_grace_ms).await?;
-                    break (ExecutionState::Cancelled, None);
-                }
+
+        let (terminal_reason, exit_code, signal) = tokio::select! {
+            status = child.wait() => {
+                let status = status?;
+                let signal = signal_name(status);
+                (TerminalReason::Exited, status.code(), signal)
+            }
+            _ = &mut timeout => {
+                platform::terminate(&mut child, &process_tree, config.execution.termination_grace_ms).await?;
+                (TerminalReason::TimedOut, None, None)
+            }
+            shutdown_result = &mut shutdown => {
+                shutdown_result?;
+                platform::terminate(&mut child, &process_tree, config.execution.termination_grace_ms).await?;
+                (TerminalReason::OwnerShutdown, None, None)
             }
         };
-        stdout_task
+
+        let stdout = stdout_task
             .await
-            .map_err(|error| Error::Unavailable(format!("stdout task failed: {error}")))??;
-        stderr_task
+            .map_err(|error| Error::Unavailable(format!("stdout capture failed: {error}")))??;
+        let stderr = stderr_task
             .await
-            .map_err(|error| Error::Unavailable(format!("stderr task failed: {error}")))??;
-        let stdout = tokio::fs::read(&stdout_path).await?;
-        let stderr = tokio::fs::read(&stderr_path).await?;
-        let stdout_tail = byte_tail(&stdout, config.output.tail_bytes);
-        let stderr_tail = byte_tail(&stderr, config.output.tail_bytes);
-        let finished = time::OffsetDateTime::now_utc()
-            .unix_timestamp_nanos()
-            .div_euclid(1_000_000) as i64;
-        Ok(JobResult {
-            job_id: job.job_id,
-            terminal_state: state,
+            .map_err(|error| Error::Unavailable(format!("stderr capture failed: {error}")))??;
+
+        Ok(ResultEnvelope {
+            protocol_version: crate::protocol::PROTOCOL_VERSION,
+            terminal_reason,
             exit_code,
-            signal: None,
+            signal,
             duration_ms: started.elapsed().as_millis() as u64,
-            stdout_log: NativeString::from_os_string(stdout_path.into_os_string()),
-            stderr_log: NativeString::from_os_string(stderr_path.into_os_string()),
-            stdout_tail: base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(stdout_tail.bytes),
-            stderr_tail: base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(stderr_tail.bytes),
-            stdout_truncated: stdout_tail.truncated,
-            stderr_truncated: stderr_tail.truncated,
-            result_hash: format!("{}:{}", stdout_tail.sha256, stderr_tail.sha256),
-            completed_at_ms: finished,
+            stdout,
+            stderr,
         })
     }
 }
 
-impl Default for Runner {
-    fn default() -> Self {
-        Self::new()
-    }
+#[derive(Debug, Clone, Copy)]
+enum OutputStream {
+    Stdout,
+    Stderr,
 }
 
-fn command_for(
-    shell_mode: ShellMode,
-    program: OsString,
-    args: Vec<OsString>,
-) -> Result<(OsString, Vec<OsString>)> {
-    match shell_mode {
-        ShellMode::Direct => Ok((program, args)),
-        ShellMode::ExplicitShell => {
-            let script = args
-                .first()
-                .cloned()
-                .ok_or_else(|| Error::InvalidInput("shell command is missing its script".into()))?;
-            #[cfg(unix)]
-            {
-                Ok(("/bin/sh".into(), vec!["-c".into(), script]))
-            }
-            #[cfg(windows)]
-            {
-                Ok(("cmd.exe".into(), vec!["/C".into(), script]))
-            }
-            #[cfg(not(any(unix, windows)))]
-            {
-                Err(Error::Unavailable(
-                    "shell execution is unsupported on this platform".into(),
-                ))
-            }
-        }
-    }
-}
-
-fn copy_safe_environment(command: &mut Command, job: &JobSpecification) {
-    for name in ["PATH", "HOME", "TMPDIR", "SYSTEMROOT", "WINDIR", "COMSPEC"] {
-        if let Some(value) = std::env::var_os(name) {
-            command.env(name, value);
-        }
-    }
-    for name in &job.environment_policy.pass {
-        if let Some(value) = std::env::var_os(name) {
-            command.env(name, value);
-        }
-    }
-}
-
-async fn copy_stream<R>(mut reader: R, path: PathBuf) -> Result<()>
+async fn read_output<R>(
+    mut reader: R,
+    stream: OutputStream,
+    output_mode: OutputMode,
+    tail_bytes: usize,
+) -> Result<CapturedOutput>
 where
-    R: tokio::io::AsyncRead + Unpin,
+    R: AsyncRead + Unpin,
 {
-    let mut file = tokio::fs::File::create(path).await?;
+    let mut rolling = RollingOutput::new(tail_bytes)?;
     let mut buffer = [0u8; 8192];
     loop {
         let read = reader.read(&mut buffer).await?;
         if read == 0 {
             break;
         }
-        file.write_all(&buffer[..read]).await?;
+        let bytes = &buffer[..read];
+        rolling.push(bytes);
+        if output_mode == OutputMode::Passthrough {
+            match stream {
+                OutputStream::Stdout => {
+                    let mut output = tokio::io::stdout();
+                    output.write_all(bytes).await?;
+                    output.flush().await?;
+                }
+                OutputStream::Stderr => {
+                    let mut output = tokio::io::stderr();
+                    output.write_all(bytes).await?;
+                    output.flush().await?;
+                }
+            }
+        }
     }
-    file.sync_all().await?;
-    Ok(())
+    Ok(rolling.finish())
+}
+
+fn copy_safe_environment(command: &mut Command, policy: &crate::protocol::EnvironmentPolicy) {
+    for name in ["PATH", "HOME", "TMPDIR", "SYSTEMROOT", "WINDIR", "COMSPEC"] {
+        if let Some(value) = std::env::var_os(name) {
+            command.env(name, value);
+        }
+    }
+    for name in &policy.pass {
+        if (!policy.is_protected(name) || policy.allows(name))
+            && let Some(value) = std::env::var_os(name)
+        {
+            command.env(name, value);
+        }
+    }
+}
+
+fn signal_name(status: std::process::ExitStatus) -> Option<String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+
+        status.signal().map(|signal| signal.to_string())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = status;
+        None
+    }
 }

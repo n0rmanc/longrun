@@ -1,33 +1,55 @@
-use longrun::output::{byte_tail, read_log_chunk, render_untrusted};
-use uuid::Uuid;
+use base64::Engine;
+use longrun::{output::RollingOutput, protocol::CapturedOutput};
 
 #[test]
-fn byte_tails_are_bounded_and_hash_the_full_stream() {
-    let tail = byte_tail(b"abcdef", 3);
-
-    assert_eq!(tail.bytes, b"def");
-    assert!(tail.truncated);
-    assert_eq!(tail.sha256.len(), 71);
-    assert!(render_untrusted(&tail).starts_with("UNTRUSTED COMMAND OUTPUT"));
+fn rolling_output_keeps_a_bounded_tail_and_counts_all_bytes() {
+    let mut output = RollingOutput::new(3).expect("rolling output");
+    output.push(b"abc");
+    output.push(b"defgh");
+    let output = output.finish();
+    assert_eq!(output.total_bytes, 8);
+    assert!(output.truncated);
+    assert_eq!(
+        base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(output.tail_base64url)
+            .expect("tail"),
+        b"fgh"
+    );
 }
 
-#[tokio::test]
-async fn log_chunks_are_bounded_and_resume_at_the_next_offset() {
-    let root = std::env::temp_dir().join(format!("longrun-output-{}", Uuid::now_v7()));
-    std::fs::create_dir_all(&root).expect("root");
-    let log = root.join("stdout.log");
-    std::fs::write(&log, b"abcdef").expect("log");
+#[test]
+fn rolling_output_preserves_invalid_bytes_as_base64() {
+    let mut output = RollingOutput::new(8).expect("rolling output");
+    output.push(&[0xff, 0x00, b'x']);
+    let output = output.finish();
+    let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(output.tail_base64url)
+        .expect("base64");
+    assert_eq!(decoded, [0xff, 0x00, b'x']);
+}
 
-    let first = read_log_chunk(&log, 0, 3).await.expect("first chunk");
-    assert_eq!(first.bytes, b"abc");
-    assert_eq!(first.next_offset, 3);
-    assert!(!first.at_end);
-
-    let second = read_log_chunk(&log, first.next_offset, 3)
-        .await
-        .expect("second chunk");
-    assert_eq!(second.bytes, b"def");
-    assert_eq!(second.next_offset, 6);
-    assert!(second.at_end);
-    std::fs::remove_dir_all(root).expect("cleanup");
+#[test]
+fn result_envelopes_are_bounded_untrusted_data() {
+    let result = longrun::protocol::ResultEnvelope {
+        protocol_version: 2,
+        terminal_reason: longrun::protocol::TerminalReason::Exited,
+        exit_code: Some(0),
+        signal: None,
+        duration_ms: 1,
+        stdout: CapturedOutput {
+            total_bytes: 3,
+            tail_base64url: "YWJj".into(),
+            truncated: false,
+            sha256: "sha256:test".into(),
+        },
+        stderr: CapturedOutput {
+            total_bytes: 0,
+            tail_base64url: String::new(),
+            truncated: false,
+            sha256: "sha256:empty".into(),
+        },
+    };
+    let context = longrun::hook::output::bounded_result_context(&result, 512);
+    assert!(context.contains("untrusted command output"));
+    assert!(context.contains("YWJj"));
 }

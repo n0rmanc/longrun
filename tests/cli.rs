@@ -1,141 +1,93 @@
 use std::ffi::OsString;
 
 use clap::Parser;
-use longrun::cli::{Cli, Command};
+use longrun::cli::{Cli, Command, InternalCommand};
 
 #[test]
-fn direct_program_arguments_remain_literal_after_separator() {
-    let cli = Cli::try_parse_from([
-        "longrun",
-        "run",
-        "--timeout",
-        "1000",
-        "--",
-        "echo",
-        "--not-an-option",
-    ])
-    .expect("parse command");
+fn generic_target_can_start_with_an_explicit_separator() {
+    let cli = Cli::try_parse_from(["longrun", "--", "/bin/echo", "--literal", "value"])
+        .expect("parse generic target");
 
-    let Command::Run(arguments) = cli.command else {
-        panic!("expected run command");
+    let Command::Target(words) = cli.command else {
+        panic!("generic target must not be parsed as a management command");
     };
     assert_eq!(
-        arguments.program,
-        vec![OsString::from("echo"), OsString::from("--not-an-option")]
-    );
-    assert_eq!(arguments.timeout.as_deref(), Some("1000"));
-}
-
-#[test]
-fn hook_receipt_precedes_the_unchanged_direct_program_arguments() {
-    let cli = Cli::try_parse_from([
-        "longrun",
-        "submit",
-        "--hook-token",
-        "--token-with-leading-hyphens",
-        "--hook-receipt",
-        "LONGRUN_RECEIPT_HANDLE_V1 token",
-        "--",
-        "/usr/bin/python3",
-        "-c",
-        "import time; time.sleep(90); print(\"DONE\")",
-    ])
-    .expect("parse hook-rewritten command");
-
-    let Command::Submit(arguments) = cli.command else {
-        panic!("expected submit command");
-    };
-    assert_eq!(
-        arguments.hook_token.as_deref(),
-        Some("--token-with-leading-hyphens")
-    );
-    assert_eq!(
-        arguments.hook_receipt.as_deref(),
-        Some("LONGRUN_RECEIPT_HANDLE_V1 token")
-    );
-    assert_eq!(
-        arguments.execution.program,
+        words,
         vec![
-            OsString::from("/usr/bin/python3"),
-            OsString::from("-c"),
-            OsString::from("import time; time.sleep(90); print(\"DONE\")"),
+            OsString::from("/bin/echo"),
+            OsString::from("--literal"),
+            OsString::from("value"),
         ]
     );
 }
 
 #[test]
-fn hook_and_internal_worker_commands_are_parsed_but_hidden_from_normal_workflows() {
-    let hook = Cli::try_parse_from(["longrun", "hook", "codex", "pre-tool-use"])
-        .expect("parse hook command");
-    assert!(matches!(hook.command, Command::Hook(_)));
-
-    let worker = Cli::try_parse_from([
+fn generic_target_without_separator_preserves_target_flags() {
+    let cli = Cli::try_parse_from([
         "longrun",
-        "internal",
-        "worker",
-        "018ef4f8-0000-7000-8000-000000000001",
+        "gh",
+        "run",
+        "watch",
+        "123",
+        "--repo",
+        "owner/repo",
+        "--exit-status",
     ])
-    .expect("parse worker command");
-    assert!(matches!(worker.command, Command::Internal(_)));
+    .expect("parse target");
+
+    let Command::Target(words) = cli.command else {
+        panic!("expected external target");
+    };
+    assert_eq!(words[0], "gh");
+    assert_eq!(words.last(), Some(&OsString::from("--exit-status")));
 }
 
 #[test]
-fn every_documented_command_has_a_parse_shape() {
-    let job = "018ef4f8-0000-7000-8000-000000000001";
-    let cases: &[&[&str]] = &[
-        &["longrun", "submit", "--", "echo", "ok"],
-        &["longrun", "run-shell", "--script", "echo ok"],
-        &["longrun", "submit-shell", "--script", "echo ok"],
-        &["longrun", "wait", job],
-        &["longrun", "status", job],
-        &["longrun", "list", "--state", "running"],
-        &["longrun", "logs", job, "--stderr"],
-        &["longrun", "cancel", job, "--grace", "1s"],
-        &["longrun", "gc", "--dry-run"],
-        &["longrun", "init", "--codex"],
-        &["longrun", "uninstall", "--codex"],
-        &["longrun", "doctor", "--json"],
-        &["longrun", "daemon", "--foreground"],
-        &["longrun", "service", "status"],
-        &["longrun", "mcp"],
-    ];
+fn hook_and_receipt_commands_are_hidden_management_paths() {
+    let hook =
+        Cli::try_parse_from(["longrun", "hook", "codex", "pre-tool-use"]).expect("hook parse");
+    assert!(matches!(hook.command, Command::Hook(_)));
 
-    for arguments in cases {
-        Cli::try_parse_from(*arguments).unwrap_or_else(|error| panic!("{arguments:?}: {error}"));
-    }
+    let receipt = Cli::try_parse_from(["longrun", "internal", "receipt", "--handoff-id", "abc123"])
+        .expect("receipt parse");
+    assert!(matches!(receipt.command, Command::Internal(_)));
+    assert!(matches!(
+        receipt.command,
+        Command::Internal(longrun::cli::InternalArgs {
+            command: InternalCommand::Receipt { .. }
+        })
+    ));
 }
 
 #[cfg(unix)]
 mod integration {
     use std::{
-        ffi::OsString,
-        fs,
-        os::unix::{ffi::OsStringExt, fs::PermissionsExt},
-        process::Command,
+        ffi::OsString, fs, os::unix::fs::PermissionsExt, process::Command as ProcessCommand,
     };
+
     use uuid::Uuid;
 
-    fn setup() -> (std::path::PathBuf, std::path::PathBuf) {
+    fn setup() -> std::path::PathBuf {
         let root = std::env::temp_dir().join(format!("longrun-cli-{}", Uuid::now_v7()));
         fs::create_dir_all(root.join("bin")).expect("root");
-        let codex = root.join("bin/codex");
-        fs::write(
-            &codex,
-            "#!/bin/sh\nwhile [ \"$1\" != \"--\" ]; do shift; done\nshift\nexec \"$@\"\n",
-        )
-        .expect("script");
-        fs::set_permissions(&codex, fs::Permissions::from_mode(0o755)).expect("mode");
-        (root, codex)
+        root
     }
 
-    fn command(root: &std::path::Path) -> Command {
-        let path = format!(
-            "{}:{}",
-            root.join("bin").display(),
-            std::env::var("PATH").expect("PATH")
-        );
-        let mut command = Command::new(env!("CARGO_BIN_EXE_longrun"));
-        command.env("HOME", root.join("home")).env("PATH", path);
+    fn command(root: &std::path::Path) -> ProcessCommand {
+        let mut command = ProcessCommand::new(env!("CARGO_BIN_EXE_longrun"));
+        command
+            .env("HOME", root.join("home"))
+            .env("XDG_CONFIG_HOME", root.join("config"))
+            .env("XDG_DATA_HOME", root.join("data"))
+            .env("XDG_RUNTIME_DIR", root.join("runtime"))
+            .env(
+                "PATH",
+                format!(
+                    "{}:{}",
+                    root.join("bin").display(),
+                    std::env::var("PATH").expect("PATH")
+                ),
+            );
         command
     }
 
@@ -147,42 +99,87 @@ mod integration {
     }
 
     #[test]
-    fn direct_run_preserves_exit_status_and_streams() {
-        let (root, _) = setup();
+    fn generic_target_returns_the_target_exit_status_and_preserves_arguments() {
+        let root = setup();
         let output = run(
             &root,
             [
-                "run",
                 "--",
                 "/bin/sh",
                 "-c",
-                "printf out; printf err >&2; exit 7",
+                "printf '%s|%s' \"$1\" \"$2\"; exit 7",
+                "ignored",
+                "--literal",
+                "value",
             ]
             .map(OsString::from),
         );
         assert_eq!(output.status.code(), Some(7));
-        assert_eq!(output.stdout, b"out");
-        assert_eq!(output.stderr, b"err");
+        assert_eq!(output.stdout, b"--literal|value");
         fs::remove_dir_all(root).expect("cleanup");
     }
 
     #[test]
-    fn direct_run_inherits_only_explicitly_allowed_environment() {
-        let (root, _) = setup();
-        let allowed = format!("LONGRUN_ALLOWED_TOKEN_{}", Uuid::now_v7().simple());
+    fn direct_target_can_timeout_without_a_persistent_job() {
+        let root = setup();
+        let output = run(
+            &root,
+            ["--timeout", "25", "--", "/bin/sh", "-c", "sleep 1"].map(OsString::from),
+        );
+        assert_eq!(output.status.code(), Some(124));
+        assert!(
+            !root
+                .join("data")
+                .join("state")
+                .join("longrun.sqlite")
+                .exists()
+        );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn removed_durable_commands_return_a_migration_error() {
+        let root = setup();
+        for command in [
+            &["run", "--", "echo", "old"][..],
+            &["run-shell", "--script", "echo old"][..],
+            &["submit", "--", "echo", "old"][..],
+            &["submit-shell", "--script", "echo old"][..],
+            &["wait", "018ef4f8-0000-7000-8000-000000000001"][..],
+            &["status", "018ef4f8-0000-7000-8000-000000000001"][..],
+            &["list"][..],
+            &["logs", "018ef4f8-0000-7000-8000-000000000001"][..],
+            &["cancel", "018ef4f8-0000-7000-8000-000000000001"][..],
+            &["gc"][..],
+            &["daemon"][..],
+            &["service", "status"][..],
+            &["mcp"][..],
+        ] {
+            let output = run(&root, command.iter().copied().map(OsString::from));
+            assert_eq!(
+                output.status.code(),
+                Some(2),
+                "{command:?}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(
+                String::from_utf8_lossy(&output.stderr).contains("removed"),
+                "{command:?}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn direct_target_copies_only_requested_environment() {
+        let root = setup();
+        let allowed = format!("LONGRUN_ALLOWED_{}", Uuid::now_v7().simple());
         let blocked = format!("LONGRUN_BLOCKED_SECRET_{}", Uuid::now_v7().simple());
         let script =
             format!("printf '%s|%s' \"${{{allowed}:-missing}}\" \"${{{blocked}:-missing}}\"");
         let output = command(&root)
-            .args([
-                OsString::from("run"),
-                OsString::from("--env-pass"),
-                OsString::from(&allowed),
-                OsString::from("--"),
-                OsString::from("/bin/sh"),
-                OsString::from("-c"),
-                OsString::from(script),
-            ])
+            .args(["--env-pass", &allowed, "--", "/bin/sh", "-c", &script])
             .env(&allowed, "allowed")
             .env(&blocked, "blocked")
             .output()
@@ -193,127 +190,26 @@ mod integration {
     }
 
     #[test]
-    fn direct_run_times_out_and_preserves_non_utf8_arguments() {
-        let (root, _) = setup();
-        let timeout = run(
-            &root,
-            ["run", "--timeout", "25", "--", "/bin/sh", "-c", "sleep 1"].map(OsString::from),
-        );
-        assert_eq!(timeout.status.code(), Some(124));
-
+    fn direct_arguments_with_shell_metacharacters_remain_literal() {
+        let root = setup();
+        let marker = root.join("should-not-exist");
+        let argument = format!("literal; touch {}", marker.display());
         let output = run(
             &root,
-            vec![
-                OsString::from("run"),
-                OsString::from("--"),
-                OsString::from("/bin/echo"),
-                OsString::from_vec(vec![0xff]),
-            ],
+            ["/usr/bin/printf", "%s", &argument]
+                .into_iter()
+                .map(OsString::from),
         );
         assert_eq!(output.status.code(), Some(0));
-        assert_eq!(output.stdout, vec![0xff, b'\n']);
+        assert_eq!(output.stdout, argument.as_bytes());
+        assert!(!marker.exists());
         fs::remove_dir_all(root).expect("cleanup");
     }
 
-    #[test]
-    fn hook_receipt_submit_does_not_initialize_private_state() {
-        let (root, _) = setup();
-        let blocked_home = root.join("blocked-home");
-        fs::write(&blocked_home, "not a directory").expect("blocked home");
-        let receipt = "LONGRUN_RECEIPT_HANDLE_V1 token";
-        let output = Command::new(env!("CARGO_BIN_EXE_longrun"))
-            .env("HOME", &blocked_home)
-            .env("XDG_CONFIG_HOME", root.join("blocked-config"))
-            .env("XDG_DATA_HOME", root.join("blocked-data"))
-            .env("XDG_STATE_HOME", root.join("blocked-state"))
-            .args([
-                "submit",
-                "--hook-token",
-                "token",
-                "--hook-receipt",
-                receipt,
-                "--",
-                "/bin/echo",
-                "must-not-run",
-            ])
-            .output()
-            .expect("run receipt submit");
-
-        assert_eq!(output.status.code(), Some(0));
-        assert_eq!(output.stdout, format!("{receipt}\n").as_bytes());
-        assert!(output.stderr.is_empty());
-        assert!(!root.join("blocked-data").exists());
-        fs::remove_dir_all(root).expect("cleanup");
-    }
-
-    #[test]
-    fn completed_jobs_support_status_list_wait_and_byte_safe_logs() {
-        let (root, _) = setup();
-        let result = run(
-            &root,
-            [
-                "run",
-                "--json",
-                "--",
-                "/bin/sh",
-                "-c",
-                "printf out; printf err >&2",
-            ]
-            .map(OsString::from),
-        );
-        assert_eq!(result.status.code(), Some(0));
-        let job_id = serde_json::from_slice::<serde_json::Value>(&result.stdout)
-            .expect("result json")["job_id"]
-            .as_str()
-            .expect("job id")
-            .to_owned();
-
-        let status = run(&root, ["status", "--json", &job_id].map(OsString::from));
-        assert_eq!(status.status.code(), Some(0));
-        let status = serde_json::from_slice::<serde_json::Value>(&status.stdout).expect("status");
-        assert_eq!(status["execution_state"], "succeeded");
-        assert_eq!(status["delivery_state"], "delivered_in_turn");
-
-        let list = run(&root, ["list", "--json"].map(OsString::from));
-        assert_eq!(list.status.code(), Some(0));
-        assert!(
-            serde_json::from_slice::<serde_json::Value>(&list.stdout).expect("list")[0]["job_id"]
-                == job_id
-        );
-
-        let wait = run(&root, ["wait", "--json", &job_id].map(OsString::from));
-        assert_eq!(wait.status.code(), Some(0));
-        assert_eq!(
-            serde_json::from_slice::<serde_json::Value>(&wait.stdout).expect("wait")["job_id"],
-            job_id
-        );
-        assert_eq!(
-            run(&root, ["logs", &job_id].map(OsString::from)).stdout,
-            b"out"
-        );
-        assert_eq!(
-            run(
-                &root,
-                ["logs", "--stderr", "--follow", &job_id].map(OsString::from)
-            )
-            .stdout,
-            b"err"
-        );
-
-        let binary = run(
-            &root,
-            ["run", "--json", "--", "/bin/sh", "-c", "printf '\\377'"].map(OsString::from),
-        );
-        assert_eq!(binary.status.code(), Some(0));
-        let binary_id = serde_json::from_slice::<serde_json::Value>(&binary.stdout)
-            .expect("binary result")["job_id"]
-            .as_str()
-            .expect("binary job id")
-            .to_owned();
-        assert_eq!(
-            run(&root, ["logs", &binary_id].map(OsString::from)).stdout,
-            [0xff]
-        );
-        fs::remove_dir_all(root).expect("cleanup");
+    #[allow(dead_code)]
+    fn _make_executable(root: &std::path::Path, name: &str, script: &str) {
+        let path = root.join("bin").join(name);
+        fs::write(&path, script).expect("write executable");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).expect("executable");
     }
 }

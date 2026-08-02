@@ -74,19 +74,17 @@ pub fn track_child(child: &Child) -> Result<JobObject> {
     Ok(job)
 }
 
-pub async fn terminate(
-    child: &mut Child,
-    job: &JobObject,
-    grace_ms: u64,
-) -> Result<std::process::ExitStatus> {
+pub async fn terminate(child: &mut Child, job: &JobObject, grace_ms: u64) -> Result<()> {
     if let Some(pid) = child.id()
         && unsafe { GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, pid) } != 0
         && let Ok(status) = timeout(Duration::from_millis(grace_ms), child.wait()).await
     {
-        return Ok(status?);
+        let _ = status?;
+        return Ok(());
     }
     if unsafe { TerminateJobObject(job.0, 1) } == 0 {
         return Err(Io(std::io::Error::last_os_error()));
     }
-    Ok(child.wait().await?)
+    let _ = child.wait().await?;
+    Ok(())
 }
