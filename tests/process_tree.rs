@@ -212,8 +212,7 @@ mod unix {
         fs::remove_dir_all(root).expect("cleanup");
     }
 
-    #[test]
-    fn owner_shutdown_kills_the_active_target_tree() {
+    fn owner_signal_kills_the_active_target_tree(signal: Signal) {
         let root = std::env::temp_dir().join(format!("longrun-owner-{}", Uuid::now_v7()));
         fs::create_dir_all(&root).expect("root");
         let pid_file = root.join("owner-child.pid");
@@ -226,10 +225,21 @@ mod unix {
             .spawn()
             .expect("longrun");
         let pid = wait_for_pid_file(&pid_file);
-        kill(Pid::from_raw(process.id() as i32), Signal::SIGTERM).expect("SIGTERM");
+        kill(Pid::from_raw(process.id() as i32), signal).expect("owner signal");
         let status = process.wait().expect("wait longrun");
         assert_eq!(status.code(), Some(130));
         wait_for_pid_gone(pid);
         fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn owner_shutdown_kills_the_active_target_tree() {
+        owner_signal_kills_the_active_target_tree(Signal::SIGTERM);
+    }
+
+    #[test]
+    fn interrupt_and_hangup_kill_the_active_target_tree() {
+        owner_signal_kills_the_active_target_tree(Signal::SIGINT);
+        owner_signal_kills_the_active_target_tree(Signal::SIGHUP);
     }
 }

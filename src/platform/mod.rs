@@ -84,9 +84,11 @@ pub async fn wait_for_shutdown() -> Result<()> {
 
         let mut interrupt = signal(SignalKind::interrupt())?;
         let mut terminate = signal(SignalKind::terminate())?;
+        let mut hangup = signal(SignalKind::hangup())?;
         tokio::select! {
             _ = interrupt.recv() => Ok(()),
             _ = terminate.recv() => Ok(()),
+            _ = hangup.recv() => Ok(()),
         }
     }
     #[cfg(not(unix))]

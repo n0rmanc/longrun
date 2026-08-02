@@ -122,17 +122,17 @@ mod integration {
     #[test]
     fn direct_target_can_timeout_without_a_persistent_job() {
         let root = setup();
+        let legacy = root.join("data/state/longrun.sqlite");
+        fs::create_dir_all(legacy.parent().expect("legacy parent")).expect("legacy state");
+        fs::write(&legacy, b"legacy job state").expect("legacy state");
         let output = run(
             &root,
             ["--timeout", "25", "--", "/bin/sh", "-c", "sleep 1"].map(OsString::from),
         );
         assert_eq!(output.status.code(), Some(124));
-        assert!(
-            !root
-                .join("data")
-                .join("state")
-                .join("longrun.sqlite")
-                .exists()
+        assert_eq!(
+            fs::read(&legacy).expect("legacy state"),
+            b"legacy job state"
         );
         fs::remove_dir_all(root).expect("cleanup");
     }

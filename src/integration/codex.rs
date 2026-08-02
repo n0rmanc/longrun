@@ -199,6 +199,7 @@ pub async fn doctor(paths: &AppPaths, config: &Config) -> DoctorReport {
             ),
         ),
         state_directory_check(paths),
+        legacy_state_check(paths),
         handoff_directory_check(paths),
         codex_version_check(),
         codex_plugin_commands_check(),
@@ -496,6 +497,34 @@ fn state_directory_check(paths: &AppPaths) -> DoctorCheck {
             format!("{} is not a directory", paths.state_dir.display()),
         ),
         Err(error) => check("state_directory", false, true, error.to_string()),
+    }
+}
+
+fn legacy_state_check(paths: &AppPaths) -> DoctorCheck {
+    let path = paths.state_dir.join("longrun.sqlite");
+    match fs::metadata(&path) {
+        Ok(metadata) if metadata.is_file() => check(
+            "legacy_state",
+            true,
+            false,
+            format!(
+                "{} is ignored by the ephemeral runtime; remove it with `longrun uninstall --codex --purge-data` if desired",
+                path.display()
+            ),
+        ),
+        Ok(_) => check(
+            "legacy_state",
+            false,
+            false,
+            format!("{} is not a regular file", path.display()),
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => check(
+            "legacy_state",
+            true,
+            false,
+            "no legacy durable job state found".into(),
+        ),
+        Err(error) => check("legacy_state", false, false, error.to_string()),
     }
 }
 

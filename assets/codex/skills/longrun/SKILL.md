@@ -60,3 +60,8 @@ GitHub Actions waits and Oracle browser reviews need network access. Use either
 command only after explicitly setting
 `execution.allow_danger_full_access = true`; otherwise explain that Longrun's
 default `:workspace` profile has no network.
+
+Handled timeout, cancellation, and owner shutdown clean up the owned process
+tree. An uncatchable Unix/macOS `SIGKILL`, crash, or power loss can leave
+descendants; do not recover or retry automatically. Ask the user to inspect
+for an orphan and manually rerun the command.

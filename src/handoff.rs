@@ -109,7 +109,7 @@ impl HandoffStore {
             Err(error) => return Err(error.into()),
         }
 
-        let Some(handoff) = self.read(&claimed_path)? else {
+        let Some(mut handoff) = self.read(&claimed_path)? else {
             let _ = fs::remove_file(&claimed_path);
             return Ok(None);
         };
@@ -125,6 +125,8 @@ impl HandoffStore {
             let _ = fs::remove_file(&claimed_path);
             return Ok(None);
         }
+        handoff.state = HandoffState::Claimed;
+        self.write(&claimed_path, &handoff)?;
         Ok(Some(ClaimedHandoff {
             handoff,
             path: claimed_path,
@@ -218,6 +220,12 @@ impl HandoffStore {
             use std::os::unix::fs::PermissionsExt;
 
             fs::set_permissions(&temp, fs::Permissions::from_mode(0o600))?;
+        }
+        #[cfg(windows)]
+        match fs::remove_file(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
         }
         fs::rename(temp, path)?;
         Ok(())

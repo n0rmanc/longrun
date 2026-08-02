@@ -69,7 +69,7 @@ fn active_hook_waits_once_and_delivers_to_the_same_turn() {
         .expect("rewritten command")
         .to_owned();
 
-    let issued = Instant::now();
+    let receipt_started = Instant::now();
     let receipt = Command::new("/bin/sh")
         .arg("-c")
         .arg(rewritten)
@@ -79,8 +79,12 @@ fn active_hook_waits_once_and_delivers_to_the_same_turn() {
         .output()
         .expect("run rewritten receipt");
     assert!(receipt.status.success(), "receipt failed: {receipt:?}");
+    assert!(
+        receipt_started.elapsed() < Duration::from_secs(1),
+        "receipt stub exceeded the fast-path budget"
+    );
 
-    let post = json!({
+    let post_input = json!({
         "session_id": "active-session",
         "turn_id": "active-turn",
         "transcript_path": null,
@@ -93,10 +97,11 @@ fn active_hook_waits_once_and_delivers_to_the_same_turn() {
         "tool_response": {"output": String::from_utf8(receipt.stdout).expect("receipt text")},
         "tool_use_id": "active-tool"
     });
-    let post = run_hook(&root, "post-tool-use", &post);
+    let post_started = Instant::now();
+    let post = run_hook(&root, "post-tool-use", &post_input);
     assert!(post.status.success(), "post hook failed: {post:?}");
     assert!(
-        issued.elapsed() >= Duration::from_secs(duration_seconds.saturating_sub(1)),
+        post_started.elapsed() >= Duration::from_secs(duration_seconds.saturating_sub(1)),
         "PostToolUse returned before the target command finished"
     );
     assert_eq!(fs::read_to_string(&starts).expect("start count"), "x");
@@ -116,6 +121,13 @@ fn active_hook_waits_once_and_delivers_to_the_same_turn() {
         .expect("completion context");
     assert!(context.contains("Terminal reason: Exited"));
     assert_eq!(bounded_stdout(context), b"DONE");
+    assert!(!root.join("data/state/longrun.sqlite").exists());
+    let duplicate = run_hook(&root, "post-tool-use", &post_input);
+    assert!(
+        duplicate.status.success() && duplicate.stdout.is_empty(),
+        "duplicate PostToolUse must not redeliver"
+    );
+    assert_eq!(fs::read_to_string(&starts).expect("start count"), "x");
 
     fs::remove_dir_all(root).expect("cleanup");
 }

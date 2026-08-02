@@ -249,6 +249,7 @@ mod codex {
         for name in [
             "executable",
             "state_directory",
+            "legacy_state",
             "codex_version",
             "codex_plugin_commands",
             "codex_plugin_activation",
@@ -264,6 +265,48 @@ mod codex {
             );
         }
         assert_eq!(report["healthy"], true);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn doctor_ignores_legacy_sqlite_and_explains_optional_cleanup() {
+        let (root, log) = setup();
+        json(&run(&root, &log, &["init", "--codex", "--json"]));
+        let initial = json(&run(&root, &log, &["doctor", "--json"]));
+        let state_detail = initial["checks"]
+            .as_array()
+            .expect("checks")
+            .iter()
+            .find(|check| check["name"] == "state_directory")
+            .and_then(|check| check["detail"].as_str())
+            .expect("state detail");
+        let state_dir = PathBuf::from(
+            state_detail
+                .strip_suffix(" exists")
+                .expect("state detail suffix"),
+        );
+        fs::create_dir_all(&state_dir).expect("state directory");
+        fs::write(state_dir.join("longrun.sqlite"), b"legacy").expect("legacy state");
+
+        let report = json(&run(&root, &log, &["doctor", "--json"]));
+        let legacy = report["checks"]
+            .as_array()
+            .expect("checks")
+            .iter()
+            .find(|check| check["name"] == "legacy_state")
+            .expect("legacy check");
+        assert_eq!(legacy["ok"], true);
+        assert_eq!(legacy["required"], false);
+        assert!(
+            legacy["detail"]
+                .as_str()
+                .expect("legacy detail")
+                .contains("longrun uninstall --codex --purge-data")
+        );
+        assert_eq!(
+            fs::read(state_dir.join("longrun.sqlite")).expect("legacy"),
+            b"legacy"
+        );
         fs::remove_dir_all(root).expect("cleanup");
     }
 }

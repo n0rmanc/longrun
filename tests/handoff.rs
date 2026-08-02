@@ -73,8 +73,12 @@ fn handoff_transitions_prepared_to_armed_to_claimed_and_is_deleted() {
         .expect("claimed");
     assert_eq!(
         claimed.handoff.state,
-        longrun::protocol::HandoffState::Armed
+        longrun::protocol::HandoffState::Claimed
     );
+    let on_disk: longrun::protocol::Handoff =
+        serde_json::from_slice(&fs::read(&claimed.path).expect("claimed handoff"))
+            .expect("claimed JSON");
+    assert_eq!(on_disk.state, longrun::protocol::HandoffState::Claimed);
     assert!(
         store
             .claim(&handoff.id, &expectation(&handoff), 104)

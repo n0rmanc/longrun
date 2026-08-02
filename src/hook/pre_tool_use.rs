@@ -17,6 +17,7 @@ use crate::{
 
 const RTK_WRAPPER: &str = "rtk";
 const RTK_LONGRUN_COMMAND: &str = "longrun";
+const UNSUPPORTED_WRAPPERS: &[&str] = &["command", "env", "nohup", "sudo", "timeout"];
 
 pub fn handle_pre_tool_use(
     input: &PreToolUseInput,
@@ -36,14 +37,22 @@ pub fn handle_pre_tool_use(
         .ok_or_else(|| Error::Unavailable("Longrun executable path is not UTF-8".into()))?;
     let words = match parse_strict_shell_words(command) {
         Ok(words) => words,
-        Err(error) if looks_like_longrun(command, expected_binary) => {
+        Err(error)
+            if looks_like_longrun(command, expected_binary)
+                || looks_like_wrapped_longrun(command, expected_binary) =>
+        {
             return Ok(Some(PreToolUseOutput::deny(format!(
                 "Invalid Longrun command: {error}"
             ))));
         }
         Err(_) => return Ok(None),
     };
-    let Some(mut target_words) = normalize_longrun_words(words, expected_binary) else {
+    let Some(mut target_words) = normalize_longrun_words(&words, expected_binary) else {
+        if has_unsupported_wrapper(&words, expected_binary) {
+            return Ok(Some(PreToolUseOutput::deny(
+                "Invalid Longrun command: unsupported wrapper; invoke Longrun directly",
+            )));
+        }
         return Ok(None);
     };
     let globals = parse_target_options(&mut target_words)?;
@@ -83,14 +92,14 @@ pub fn handle_pre_tool_use(
     ))))
 }
 
-fn normalize_longrun_words(words: Vec<String>, expected_binary: &str) -> Option<Vec<OsString>> {
+fn normalize_longrun_words(words: &[String], expected_binary: &str) -> Option<Vec<OsString>> {
     if words.first().map(String::as_str) == Some(expected_binary) {
-        return Some(words.into_iter().skip(1).map(OsString::from).collect());
+        return Some(words.iter().skip(1).cloned().map(OsString::from).collect());
     }
     if words.first().map(String::as_str) == Some(RTK_WRAPPER)
         && words.get(1).map(String::as_str) == Some(RTK_LONGRUN_COMMAND)
     {
-        return Some(words.into_iter().skip(2).map(OsString::from).collect());
+        return Some(words.iter().skip(2).cloned().map(OsString::from).collect());
     }
     None
 }
@@ -100,6 +109,17 @@ fn looks_like_longrun(command: &str, expected_binary: &str) -> bool {
     words.first().map(String::as_str) == Some(expected_binary)
         || (words.first().map(String::as_str) == Some(RTK_WRAPPER)
             && words.get(1).map(String::as_str) == Some(RTK_LONGRUN_COMMAND))
+}
+
+fn looks_like_wrapped_longrun(command: &str, expected_binary: &str) -> bool {
+    has_unsupported_wrapper(&shell_prefix_words(command, 4), expected_binary)
+}
+
+fn has_unsupported_wrapper(words: &[String], expected_binary: &str) -> bool {
+    UNSUPPORTED_WRAPPERS.contains(&words.first().map(String::as_str).unwrap_or_default())
+        && (words.get(1).map(String::as_str) == Some(expected_binary)
+            || (words.get(1).map(String::as_str) == Some(RTK_WRAPPER)
+                && words.get(2).map(String::as_str) == Some(RTK_LONGRUN_COMMAND)))
 }
 
 fn parse_target_options(words: &mut Vec<OsString>) -> Result<GlobalsForTarget> {

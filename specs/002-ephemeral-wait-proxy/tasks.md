@@ -72,7 +72,7 @@ one same-turn result.
 ### Tests for User Story 1
 
 - [X] T016 [P] [US1] Add failing exact Longrun/RTK hook-recognition and shell-composition tests in `tests/hooks.rs`
-- [ ] T017 [P] [US1] Add failing same-turn, sub-1000-ms fast-stub, no-polling, and duplicate-PostToolUse tests in `tests/active_session.rs`
+- [X] T017 [P] [US1] Add failing same-turn, sub-1000-ms fast-stub, no-polling, and duplicate-PostToolUse tests in `tests/active_session.rs`
 - [X] T018 [US1] Add the ignored live active-session harness for a 125-second target and event-stream evidence in `tests/live/active_session.rs`
 
 ### Implementation for User Story 1
@@ -99,8 +99,8 @@ forms; verify literal argv and target status preservation.
 
 - [X] T025 [P] [US2] Add direct terminal/CI success, failure, timeout, and literal-argv tests in `tests/cli.rs`
 - [X] T026 [P] [US2] Add generic wrapper normalization tests for `longrun` and `rtk longrun` in `tests/hooks.rs`
-- [ ] T027 [P] [US2] Add ignored, release-gated GitHub Actions watch scenarios for success, failure, cancellation, auth failure, and no polling in `tests/live/github_watch.rs`
-- [ ] T028 [P] [US2] Add ignored, release-gated Oracle browser scenarios for one invocation, bounded output, failure, cleanup, and no reattachment in `tests/live/oracle.rs`
+- [X] T027 [P] [US2] Add ignored, release-gated GitHub Actions watch scenarios for success, failure, cancellation, auth failure, and no polling in `tests/live/github_watch.rs`
+- [X] T028 [P] [US2] Add ignored, release-gated Oracle browser scenarios for one invocation, bounded output, failure, cleanup, and no reattachment in `tests/live/oracle.rs`
 
 ### Implementation for User Story 2
 
@@ -122,9 +122,9 @@ shutdown, duplicate delivery, lost delivery, and stale-state paths.
 
 ### Tests for User Story 3
 
-- [ ] T033 [P] [US3] Add failing no-recovery, lost-delivery, manual-rerun, and no-persistent-artifact tests in `tests/active_session.rs`
+- [X] T033 [P] [US3] Add failing no-recovery, lost-delivery, manual-rerun, and no-persistent-artifact tests in `tests/active_session.rs`
 - [X] T034 [P] [US3] Add failing Unix/macOS process-group, descendant, leader-exit, signal, and documented hard-kill limitation checks in `tests/process_tree.rs`
-- [ ] T035 [US3] Add failing old-state inertness and removed durable command tests in `tests/cli.rs`
+- [X] T035 [US3] Add failing old-state inertness and removed durable command tests in `tests/cli.rs`
 
 ### Implementation for User Story 3
 
@@ -132,8 +132,8 @@ shutdown, duplicate delivery, lost delivery, and stale-state paths.
 - [X] T037 [US3] Delete durable job, worker, supervisor, IPC, MCP job backend, service, SessionStart, and recovery modules in `src/store.rs`, `src/worker.rs`, `src/supervisor.rs`, `src/ipc/`, `src/mcp.rs`, `src/integration/service.rs`, and `src/hook/session_start.rs`
 - [X] T038 [US3] Remove durable CLI dispatch, daemon/service commands, recovery configuration, retention, delivery leases, and retry settings in `src/cli.rs`, `src/config.rs`, and `src/main.rs`
 - [X] T039 [US3] Remove durable-only dependencies and obsolete protocol/build wiring in `Cargo.toml`, `Cargo.lock`, `src/lib.rs`, and `src/protocol.rs`
-- [ ] T040 [US3] Implement inert handling and cleanup guidance for old SQLite/job artifacts during repair and diagnostics in `src/integration/codex.rs` and `src/paths.rs`
-- [ ] T041 [US3] Run state inspection after success, failure, timeout, cancellation, and lost delivery and record manual-rerun evidence in `specs/002-ephemeral-wait-proxy/implementation-log.md`
+- [X] T040 [US3] Implement inert handling and cleanup guidance for old SQLite/job artifacts during repair and diagnostics in `src/integration/codex.rs` and `src/paths.rs`
+- [X] T041 [US3] Run state inspection after success, failure, timeout, cancellation, and lost delivery and record manual-rerun evidence in `specs/002-ephemeral-wait-proxy/implementation-log.md`
 
 **Checkpoint**: No active Longrun process can create or recover a durable job.
 
@@ -148,9 +148,9 @@ output.
 
 ### Tests for User Story 4
 
-- [ ] T042 [P] [US4] Add failing named-profile, no-escalation, denied-filesystem, denied-network, and secret-environment tests in `tests/security.rs`
+- [X] T042 [P] [US4] Add failing named-profile, no-escalation, denied-filesystem, denied-network, and secret-environment tests in `tests/security.rs`
 - [X] T043 [US4] Add failing shell-composition, wrapper, metacharacter, and literal-native-argv tests in `tests/security.rs`
-- [ ] T044 [P] [US4] Add failing large-output, invalid-byte, fake-hook-JSON, fake-receipt, prompt-injection, and no-hook-spill output tests in `tests/output.rs`
+- [X] T044 [P] [US4] Add failing large-output, invalid-byte, fake-hook-JSON, fake-receipt, prompt-injection, and no-hook-spill output tests in `tests/output.rs`
 
 ### Implementation for User Story 4
 
@@ -196,7 +196,7 @@ constitution and quickstart.
 - [X] T059 Update active integration fixtures and source references that still mention `submit`, workers, recovery, or result persistence in `tests/active_session.rs`, `tests/integration_codex.rs`, and `assets/codex/skills/longrun/SKILL.md`
 - [X] T060 Run `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and `cargo test --locked`, then record exact results in `specs/002-ephemeral-wait-proxy/implementation-log.md`
 - [X] T061 Run a final repository search for durable command, supervisor, worker, SessionStart recovery, polling, and automatic-retry references in `README.md`, `src/`, `tests/`, and `assets/`
-- [ ] T062 Validate every scenario in `specs/002-ephemeral-wait-proxy/quickstart.md` and map evidence to FR/SC coverage in `specs/002-ephemeral-wait-proxy/implementation-log.md`
+- [X] T062 Validate every scenario in `specs/002-ephemeral-wait-proxy/quickstart.md` and map evidence to FR/SC coverage in `specs/002-ephemeral-wait-proxy/implementation-log.md`
 
 ## Dependencies & Execution Order
 
@@ -285,11 +285,11 @@ implementation.
 
 ## Phase 9: Convergence
 
-The deterministic generic wait path is implemented, but the following
-spec-required evidence is still missing:
+The deterministic generic wait path is implemented, and the following
+convergence evidence is complete:
 
-- [X] T063 Add lifecycle tests for cancellation, handled signals, leader exit, descendant cleanup, and documented uncatchable owner death per FR-014, FR-015, and SC-005 (partial)
-- [ ] T064 Add lost-delivery, manual-rerun, old-state inertness, and no-persistent-artifact tests per FR-012, FR-013, FR-022, and SC-004 (missing)
-- [ ] T065 Add denied filesystem/network, protected-environment, forged-receipt, prompt-injection, and no-hook-spill tests per FR-011, FR-017, FR-019, and SC-006/SC-007 (partial)
-- [ ] T066 Add ignored Codex-hook GitHub Actions and Oracle browser acceptance harnesses covering one invocation, failure/auth behavior, bounded output, and no reattachment per US2 and SC-011 (missing)
-- [ ] T067 Run the complete quickstart matrix and map direct, RTK, active-session, GitHub, Oracle, lifecycle, security, and upgrade evidence to FR/SC coverage per SC-001–SC-012 (missing)
+- [X] T063 Add lifecycle tests for cancellation, handled signals, leader exit, descendant cleanup, and documented uncatchable owner death per FR-014, FR-015, and SC-005 (completed)
+- [X] T064 Add lost-delivery, manual-rerun, old-state inertness, and no-persistent-artifact tests per FR-012, FR-013, FR-022, and SC-004 (completed)
+- [X] T065 Add denied filesystem/network, protected-environment, forged-receipt, prompt-injection, and no-hook-spill tests per FR-011, FR-017, FR-019, and SC-006/SC-007 (completed)
+- [X] T066 Add ignored Codex-hook GitHub Actions and Oracle browser acceptance harnesses covering one invocation, failure/auth behavior, bounded output, and no reattachment per US2 and SC-011 (completed)
+- [X] T067 Run the complete quickstart matrix and map direct, RTK, active-session, GitHub, Oracle, lifecycle, security, and upgrade evidence to FR/SC coverage per SC-001–SC-012 (completed)

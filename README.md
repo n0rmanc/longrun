@@ -173,6 +173,10 @@ program and native arguments instead.
 - Output is captured with bounded tails, byte counts, hashes, and an
   untrusted-output marker before it is returned to the model.
 - The ephemeral handoff is private, one-time, and removed after delivery.
+- Handled timeout, cancellation, and owner shutdown terminate the owned
+  process tree. An uncatchable Unix/macOS `SIGKILL`, crash, or power loss can
+  still leave descendants; Longrun does not recover them, and the user must
+  manually rerun the command after checking for any orphan.
 - No worker, supervisor, service, SQLite job store, recovery, or automatic
   rerun is installed.
 
