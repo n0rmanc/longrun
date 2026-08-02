@@ -145,6 +145,8 @@ impl Runner {
             status = child.wait() => {
                 let status = status?;
                 let signal = signal_name(status);
+                platform::cleanup_after_exit(&process_tree, config.execution.termination_grace_ms)
+                    .await?;
                 (TerminalReason::Exited, status.code(), signal)
             }
             _ = &mut timeout => {

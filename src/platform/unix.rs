@@ -7,7 +7,7 @@ use nix::{
 };
 use tokio::{
     process::{Child, Command},
-    time::{Duration, timeout},
+    time::{Duration, sleep, timeout},
 };
 
 use crate::error::{Error, Result};
@@ -55,9 +55,19 @@ pub async fn terminate(
     Ok(())
 }
 
-fn signal_group(group: Pid, signal: Signal) -> Result<()> {
+pub async fn cleanup_after_exit(process_group: &ProcessGroup, grace_ms: u64) -> Result<()> {
+    if !signal_group(process_group.pgid, Signal::SIGTERM)? {
+        return Ok(());
+    }
+    sleep(Duration::from_millis(grace_ms)).await;
+    let _ = signal_group(process_group.pgid, Signal::SIGKILL)?;
+    Ok(())
+}
+
+fn signal_group(group: Pid, signal: Signal) -> Result<bool> {
     match killpg(group, signal) {
-        Ok(()) | Err(Errno::ESRCH) => Ok(()),
+        Ok(()) => Ok(true),
+        Err(Errno::ESRCH) => Ok(false),
         Err(error) => Err(Error::Io(io::Error::from_raw_os_error(error as i32))),
     }
 }

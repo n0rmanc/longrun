@@ -51,14 +51,29 @@ pub async fn terminate(child: &mut Child, process_tree: &ProcessTree, grace_ms: 
     unix::terminate(child, &process_tree.0, grace_ms).await
 }
 
+#[cfg(unix)]
+pub async fn cleanup_after_exit(process_tree: &ProcessTree, grace_ms: u64) -> Result<()> {
+    unix::cleanup_after_exit(&process_tree.0, grace_ms).await
+}
+
 #[cfg(windows)]
 pub async fn terminate(child: &mut Child, process_tree: &ProcessTree, grace_ms: u64) -> Result<()> {
     windows::terminate(child, &process_tree.0, grace_ms).await
 }
 
+#[cfg(windows)]
+pub async fn cleanup_after_exit(_: &ProcessTree, _: u64) -> Result<()> {
+    Ok(())
+}
+
 #[cfg(not(any(unix, windows)))]
 pub async fn terminate(child: &mut Child, _: &ProcessTree, _: u64) -> Result<()> {
     let _ = child.kill().await;
+    Ok(())
+}
+
+#[cfg(not(any(unix, windows)))]
+pub async fn cleanup_after_exit(_: &ProcessTree, _: u64) -> Result<()> {
     Ok(())
 }
 

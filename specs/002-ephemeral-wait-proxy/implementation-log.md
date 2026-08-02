@@ -109,3 +109,22 @@ path, and direct generic GitHub/Oracle targets pass. Full Codex-hook-mode
 GitHub/Oracle scenarios (including failure/auth cases), process
 cancellation/leader-exit coverage, and old-state/manual-rerun inspection
 remain listed in `tasks.md`.
+
+## Checkpoint: owned process-tree lifecycle
+
+Date: 2026-08-02
+
+- Normal leader exit now performs a best-effort process-group cleanup so
+  background descendants do not survive a successful shell leader.
+- Added Unix tests for timeout, future cancellation/child drop, leader exit,
+  descendant cleanup, and SIGTERM owner shutdown.
+
+Validation:
+
+```text
+rtk cargo test --locked --test process_tree -- --nocapture --test-threads=1
+4 passed
+
+rtk cargo clippy --all-targets -- -D warnings
+No issues found
+```

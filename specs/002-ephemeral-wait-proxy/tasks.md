@@ -47,7 +47,7 @@ user story.
 
 - [X] T005 [P] Add failing prepared/armed/claimed/deleted, expiry, mismatch, duplicate-claim, and 100-attempt sequential/concurrent stress tests in `tests/handoff.rs`
 - [X] T006 [P] Add failing bounded-tail, byte-count, truncation, invalid-byte, and untrusted-output tests in `tests/output.rs`
-- [ ] T007 [P] Add failing child-drop, timeout, cancellation, descendant, and leader-exit process tests in `tests/process_tree.rs`
+- [X] T007 [P] Add failing child-drop, timeout, cancellation, descendant, and leader-exit process tests in `tests/process_tree.rs`
 - [X] T008 Implement protected ephemeral handoff serialization, atomic transitions, expiry cleanup, and one-time claim in `src/handoff.rs`
 - [X] T009 Simplify native argument, target, terminal-reason, and result-envelope types for ephemeral execution in `src/protocol.rs`
 - [X] T010 Simplify handoff TTL, timeout, termination/forced-cleanup margins, named-profile, environment, output, result-serialization-margin, and PostToolUse-timeout configuration in `src/config.rs`
@@ -123,7 +123,7 @@ shutdown, duplicate delivery, lost delivery, and stale-state paths.
 ### Tests for User Story 3
 
 - [ ] T033 [P] [US3] Add failing no-recovery, lost-delivery, manual-rerun, and no-persistent-artifact tests in `tests/active_session.rs`
-- [ ] T034 [P] [US3] Add failing Unix/macOS process-group, descendant, leader-exit, signal, and documented hard-kill limitation checks in `tests/process_tree.rs`
+- [X] T034 [P] [US3] Add failing Unix/macOS process-group, descendant, leader-exit, signal, and documented hard-kill limitation checks in `tests/process_tree.rs`
 - [ ] T035 [US3] Add failing old-state inertness and removed durable command tests in `tests/cli.rs`
 
 ### Implementation for User Story 3
@@ -288,7 +288,7 @@ implementation.
 The deterministic generic wait path is implemented, but the following
 spec-required evidence is still missing:
 
-- [ ] T063 Add lifecycle tests for cancellation, handled signals, leader exit, descendant cleanup, and documented uncatchable owner death per FR-014, FR-015, and SC-005 (partial)
+- [X] T063 Add lifecycle tests for cancellation, handled signals, leader exit, descendant cleanup, and documented uncatchable owner death per FR-014, FR-015, and SC-005 (partial)
 - [ ] T064 Add lost-delivery, manual-rerun, old-state inertness, and no-persistent-artifact tests per FR-012, FR-013, FR-022, and SC-004 (missing)
 - [ ] T065 Add denied filesystem/network, protected-environment, forged-receipt, prompt-injection, and no-hook-spill tests per FR-011, FR-017, FR-019, and SC-006/SC-007 (partial)
 - [ ] T066 Add ignored Codex-hook GitHub Actions and Oracle browser acceptance harnesses covering one invocation, failure/auth behavior, bounded output, and no reattachment per US2 and SC-011 (missing)
