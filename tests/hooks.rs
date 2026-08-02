@@ -13,6 +13,7 @@ use longrun::{
         post_tool_use::handle_post_tool_use,
         pre_tool_use::{handle_pre_tool_use, now_ms, parse_strict_shell_words},
     },
+    metrics,
     paths::AppPaths,
     runner::Runner,
 };
@@ -95,6 +96,49 @@ fn pre_tool_use_recognizes_exact_generic_and_rtk_forms() {
             .expect("rtk hook")
             .is_some()
     );
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn management_gain_passes_through_but_explicit_gain_target_is_rewritten() {
+    let root = std::env::temp_dir().join(format!("longrun-hooks-gain-{}", Uuid::now_v7()));
+    let paths = paths(&root);
+    paths.ensure_private_state().expect("state");
+    let executable = std::env::current_exe().expect("executable");
+    let cwd = std::env::current_dir().expect("cwd");
+
+    let management = PreToolUseInput {
+        common: common("PreToolUse", &cwd),
+        turn_id: "gain-management".into(),
+        tool_use_id: "gain-management".into(),
+        tool_name: "Bash".into(),
+        tool_input: json!({"command": format!("{} gain --json", executable.display())}),
+    };
+    assert!(
+        handle_pre_tool_use(&management, &executable, &paths, &Config::default(), 1_000,)
+            .expect("management command")
+            .is_none()
+    );
+
+    let explicit_target = PreToolUseInput {
+        common: common("PreToolUse", &cwd),
+        turn_id: "gain-target".into(),
+        tool_use_id: "gain-target".into(),
+        tool_name: "Bash".into(),
+        tool_input: json!({"command": format!("{} -- gain arg", executable.display())}),
+    };
+    assert!(
+        handle_pre_tool_use(
+            &explicit_target,
+            &executable,
+            &paths,
+            &Config::default(),
+            1_001,
+        )
+        .expect("explicit target")
+        .is_some()
+    );
+
     fs::remove_dir_all(root).expect("cleanup");
 }
 
@@ -237,6 +281,82 @@ async fn post_tool_use_claims_once_waits_and_returns_same_turn_result() {
             .is_none()
     );
     assert_eq!(fs::read_to_string(root.join("starts")).expect("start"), "x");
+    assert_eq!(
+        metrics::read_report(&paths)
+            .expect("metrics")
+            .recorded_executions,
+        1
+    );
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[tokio::test]
+async fn post_tool_use_records_timeout_without_duplicate_execution() {
+    let root = std::env::temp_dir().join(format!("longrun-post-timeout-{}", Uuid::now_v7()));
+    let paths = paths(&root);
+    paths.ensure_private_state().expect("state");
+    let sandbox = fake_codex(&root);
+    let executable = std::env::current_exe().expect("executable");
+    let cwd = std::env::current_dir().expect("cwd");
+    let created_at_ms = now_ms().expect("time");
+    let pre = PreToolUseInput {
+        common: common("PreToolUse", &cwd),
+        turn_id: "timeout-turn".into(),
+        tool_use_id: "timeout-tool".into(),
+        tool_name: "Bash".into(),
+        tool_input: json!({
+            "command": format!(
+                "{} --timeout 25 -- /bin/sh -c 'sleep 1'",
+                executable.display()
+            )
+        }),
+    };
+    let pre_output =
+        handle_pre_tool_use(&pre, &executable, &paths, &Config::default(), created_at_ms)
+            .expect("pre")
+            .expect("pre output");
+    let rewritten = pre_output
+        .hook_specific_output
+        .updated_input
+        .expect("stub")
+        .command;
+    let id = rewritten
+        .split_whitespace()
+        .last()
+        .expect("handoff id")
+        .trim_matches('\'');
+    let receipt = HandoffStore::new(&paths)
+        .arm(id, created_at_ms + 1)
+        .expect("arm")
+        .expect("receipt");
+    let post = PostToolUseInput {
+        common: common("PostToolUse", &cwd),
+        turn_id: "timeout-turn".into(),
+        tool_use_id: "timeout-tool".into(),
+        tool_name: "Bash".into(),
+        tool_input: json!({"command": rewritten}),
+        tool_response: json!({"output": receipt}),
+    };
+
+    let output = handle_post_tool_use(
+        &post,
+        &paths,
+        &Config::default(),
+        &Runner::with_sandbox_binary(sandbox),
+    )
+    .await
+    .expect("post")
+    .expect("post output");
+    assert!(
+        output
+            .hook_specific_output
+            .additional_context
+            .contains("Terminal reason: TimedOut")
+    );
+    let report = metrics::read_report(&paths).expect("metrics");
+    assert_eq!(report.recorded_executions, 1);
+    assert_eq!(report.outcomes.timed_out, 1);
+
     fs::remove_dir_all(root).expect("cleanup");
 }
 

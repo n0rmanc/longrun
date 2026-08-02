@@ -54,17 +54,17 @@ verify the global totals and outcome counts.
 
 ### Tests for User Story 1
 
-- [ ] T006 [US1] Add CLI parsing tests for `gain`, `gain --clear`, and explicit `longrun -- gain` target collision in `tests/cli.rs`
-- [ ] T007 [US1] Add isolated direct-execution integration tests for success, nonzero exit, timeout, empty history, outcome-count sums, exactly-once totals, and a 100-record aggregate in `tests/cli.rs`
-- [ ] T008 [P] [US1] Add hook integration tests for terminal recording, timeout/owner-shutdown coverage, duplicate `PostToolUse` suppression, and incomplete/forged handoff non-recording in `tests/hooks.rs`
+- [x] T006 [US1] Add CLI parsing tests for `gain`, `gain --clear`, and explicit `longrun -- gain` target collision in `tests/cli.rs`
+- [x] T007 [US1] Add isolated direct-execution integration tests for success, nonzero exit, timeout, empty history, outcome-count sums, exactly-once totals, and a 100-record aggregate in `tests/cli.rs`
+- [x] T008 [P] [US1] Add hook integration tests for terminal recording and timeout coverage, duplicate `PostToolUse` suppression, and incomplete/forged handoff non-recording in `tests/hooks.rs`; keep owner-shutdown classification covered by `tests/metrics.rs`
 
 ### Implementation for User Story 1
 
-- [ ] T009 [US1] Add the visible `Gain` subcommand and `GainArgs` options in `src/cli.rs`
-- [ ] T010 [US1] Record direct `Runner::execute` terminal results through the metrics module while preserving the target-derived exit code in `src/cli.rs`
-- [ ] T011 [US1] Record Codex-hook `Runner::execute` terminal results after handoff cleanup while preserving the existing bounded same-turn result in `src/hook/post_tool_use.rs`
-- [ ] T012 [US1] Render the human-readable global gain report and terminal-outcome counts from `src/metrics.rs` through `src/cli.rs`
-- [ ] T013 [US1] Keep `gain` as a management command in the hook recognizer and require `longrun -- gain` for an external target collision in `src/hook/pre_tool_use.rs`
+- [x] T009 [US1] Add the visible `Gain` subcommand and `GainArgs` options in `src/cli.rs`
+- [x] T010 [US1] Record direct `Runner::execute` terminal results through the metrics module while preserving the target-derived exit code in `src/cli.rs`
+- [x] T011 [US1] Record Codex-hook `Runner::execute` terminal results after handoff cleanup while preserving the existing bounded same-turn result in `src/hook/post_tool_use.rs`
+- [x] T012 [US1] Render the human-readable global gain report and terminal-outcome counts from `src/metrics.rs` through `src/cli.rs`
+- [x] T013 [US1] Keep `gain` as a management command in the hook recognizer and require `longrun -- gain` for an external target collision in `src/hook/pre_tool_use.rs`
 
 **Checkpoint**: The P1 report works for both supported execution paths, does
 not count the receipt stub, and never changes target execution semantics.

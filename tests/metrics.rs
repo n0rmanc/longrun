@@ -111,6 +111,7 @@ fn records_terminal_outcomes_and_aggregates_without_command_details() {
     assert_eq!(records.len(), 5);
     for record in records {
         assert!(record.contains("\"program\":\"cargo\""));
+        assert!(record.contains("\"mode\":\"direct\""));
         assert!(!record.contains("--secret-argument"));
         assert!(!record.contains("/private/test-cwd"));
     }
