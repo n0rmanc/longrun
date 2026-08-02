@@ -260,6 +260,34 @@ mod integration {
     }
 
     #[test]
+    fn gain_human_and_json_reports_share_per_program_values() {
+        let root = setup();
+        let sh = run(&root, ["/bin/sh", "-c", "exit 0"].map(OsString::from));
+        assert_eq!(sh.status.code(), Some(0));
+        let printf = run(
+            &root,
+            ["/usr/bin/printf", "%s", "literal"].map(OsString::from),
+        );
+        assert_eq!(printf.status.code(), Some(0));
+
+        let human = run(&root, ["gain"].map(OsString::from));
+        assert_eq!(human.status.code(), Some(0));
+        let human = String::from_utf8_lossy(&human.stdout);
+        assert!(human.contains("By Program"));
+        assert!(human.contains("sh"));
+        assert!(human.contains("printf"));
+        assert!(!human.contains("literal"));
+
+        let json = run(&root, ["--json", "gain"].map(OsString::from));
+        assert_eq!(json.status.code(), Some(0));
+        let json: serde_json::Value = serde_json::from_slice(&json.stdout).expect("gain JSON");
+        assert_eq!(json["recorded_executions"], 2);
+        assert_eq!(json["by_program"].as_array().expect("programs").len(), 2);
+
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
     fn gain_aggregates_one_hundred_direct_records() {
         let root = setup();
 
@@ -278,6 +306,63 @@ mod integration {
         let report: serde_json::Value = serde_json::from_slice(&report.stdout).expect("gain JSON");
         assert_eq!(report["recorded_executions"], 100);
         assert_eq!(report["outcomes"]["completed"], 100);
+
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn gain_clear_returns_json_and_preserves_explicit_config() {
+        let root = setup();
+        let config = root.join("config.toml");
+        let config_contents = b"[execution]\ntimeout_ms = 12000\n";
+        fs::write(&config, config_contents).expect("config");
+
+        let target = run(
+            &root,
+            [
+                "--config",
+                config.to_str().expect("config path"),
+                "--",
+                "/bin/echo",
+                "before-clear",
+            ]
+            .map(OsString::from),
+        );
+        assert_eq!(target.status.code(), Some(0));
+
+        let clear = run(
+            &root,
+            [
+                "--config",
+                config.to_str().expect("config path"),
+                "gain",
+                "--clear",
+                "--json",
+            ]
+            .map(OsString::from),
+        );
+        assert_eq!(clear.status.code(), Some(0));
+        let clear: serde_json::Value = serde_json::from_slice(&clear.stdout).expect("clear JSON");
+        assert_eq!(clear, serde_json::json!({"cleared": true}));
+        assert_eq!(
+            fs::read(&config).expect("config after clear"),
+            config_contents
+        );
+
+        let report = run(
+            &root,
+            [
+                "--config",
+                config.to_str().expect("config path"),
+                "gain",
+                "--json",
+            ]
+            .map(OsString::from),
+        );
+        assert_eq!(report.status.code(), Some(0));
+        let report: serde_json::Value =
+            serde_json::from_slice(&report.stdout).expect("report after clear");
+        assert_eq!(report["recorded_executions"], 0);
 
         fs::remove_dir_all(root).expect("cleanup");
     }

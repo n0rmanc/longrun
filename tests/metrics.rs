@@ -162,6 +162,104 @@ fn clear_removes_metrics_only() {
     assert!(paths.config_dir.join("config.toml").exists());
     assert!(paths.handoff_dir.join("keep").exists());
 
+    metrics::record(
+        &paths,
+        &target("gh", &["run", "watch"]),
+        ExecutionMode::Direct,
+        &result(TerminalReason::Exited, Some(0), 84),
+    )
+    .expect("record after clear");
+    assert_eq!(
+        metrics::read_report(&paths)
+            .expect("read new period")
+            .recorded_executions,
+        1
+    );
+
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn groups_programs_by_basename_and_sorts_summaries() {
+    let root = root();
+    let paths = paths(&root);
+    paths.ensure_private_state().expect("state");
+
+    for (program, args, duration_ms) in [
+        ("/usr/bin/gh", &["run"][..], 300),
+        ("/opt/tools/gh", &["pr", "view"][..], 500),
+        ("/usr/bin/cargo", &["test"][..], 700),
+    ] {
+        metrics::record(
+            &paths,
+            &target(program, args),
+            ExecutionMode::Direct,
+            &result(TerminalReason::Exited, Some(0), duration_ms),
+        )
+        .expect("record program");
+    }
+
+    let report = metrics::read_report(&paths).expect("read report");
+    assert_eq!(
+        report
+            .by_program
+            .iter()
+            .map(|summary| summary.program.as_str())
+            .collect::<Vec<_>>(),
+        ["cargo", "gh"]
+    );
+    assert_eq!(report.by_program[0].count, 1);
+    assert_eq!(report.by_program[1].count, 2);
+    assert_eq!(report.by_program[1].total_duration_ms, 800);
+    assert_eq!(
+        report
+            .by_program
+            .iter()
+            .map(|summary| summary.count)
+            .sum::<u64>(),
+        report.recorded_executions
+    );
+
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+#[ignore = "run explicitly as the local 10,000-record performance check"]
+fn scans_ten_thousand_records_under_one_second() {
+    use std::time::{Duration, Instant};
+
+    let root = root();
+    let paths = paths(&root);
+    paths.ensure_private_state().expect("state");
+    let metrics_dir = paths.data_dir.join("metrics");
+    fs::create_dir_all(&metrics_dir).expect("metrics directory");
+
+    for index in 0..10_000 {
+        let metric = metrics::ExecutionMetric {
+            schema_version: metrics::SCHEMA_VERSION,
+            program: if index % 2 == 0 {
+                "cargo".into()
+            } else {
+                "gh".into()
+            },
+            duration_ms: index,
+            outcome: MetricOutcome::Completed,
+            exit_code: Some(0),
+            mode: metrics::MetricMode::Direct,
+            completed_at_ms: index as i64,
+        };
+        fs::write(
+            metrics_dir.join(format!("{index:05}.json")),
+            serde_json::to_vec(&metric).expect("serialize metric"),
+        )
+        .expect("write metric");
+    }
+
+    let started = Instant::now();
+    let report = metrics::read_report(&paths).expect("read report");
+    assert_eq!(report.recorded_executions, 10_000);
+    assert!(started.elapsed() < Duration::from_secs(1));
+
     fs::remove_dir_all(root).expect("cleanup");
 }
 

@@ -82,13 +82,13 @@ counts sum to the global count and no raw arguments appear.
 
 ### Tests for User Story 2
 
-- [ ] T014 [P] [US2] Add per-program aggregation tests for repeated executable names, different arguments, sorted summaries, and count/duration invariants in `tests/metrics.rs`
-- [ ] T015 [US2] Add CLI output assertions for per-program count, total duration, average duration, and argument/path privacy in `tests/cli.rs`
+- [x] T014 [P] [US2] Add per-program aggregation tests for repeated executable names, different arguments, sorted summaries, and count/duration invariants in `tests/metrics.rs`
+- [x] T015 [US2] Add CLI output assertions for per-program count, total duration, average duration, and argument/path privacy in `tests/cli.rs`
 
 ### Implementation for User Story 2
 
-- [ ] T016 [US2] Implement deterministic per-program aggregation and human table formatting in `src/metrics.rs`
-- [ ] T017 [US2] Wire per-program summaries into the human gain report without adding command-line argument or working-directory fields in `src/cli.rs`
+- [x] T016 [US2] Implement deterministic per-program aggregation and human table formatting in `src/metrics.rs`
+- [x] T017 [US2] Wire per-program summaries into the human gain report without adding command-line argument or working-directory fields in `src/cli.rs`
 
 **Checkpoint**: The P2 breakdown is actionable, compact, and privacy-safe while
 preserving the P1 totals.
@@ -106,13 +106,13 @@ usable.
 
 ### Tests for User Story 3
 
-- [ ] T018 [P] [US3] Add JSON schema/value parity tests for `gain --json` and global `--json` in `tests/cli.rs`
-- [ ] T019 [US3] Add clear-scope and ordering tests proving `gain --clear` does not execute or stop a target, preserves a metric published after clear completes, and leaves configuration, handoff, and integration paths unchanged in `tests/cli.rs` and `tests/hooks.rs`
+- [x] T018 [P] [US3] Add JSON schema/value parity tests for `gain --json` and global `--json` in `tests/cli.rs`
+- [x] T019 [US3] Add clear-scope and ordering tests proving `gain --clear` does not execute or stop a target, preserves a metric published after clear completes, and leaves configuration, handoff, and integration paths unchanged in `tests/cli.rs` and `tests/hooks.rs`
 
 ### Implementation for User Story 3
 
-- [ ] T020 [US3] Implement `--json` report serialization and `--clear` dispatch behavior in `src/cli.rs`
-- [ ] T021 [US3] Emit the documented `cleared` JSON response and preserve exact integer millisecond values in `src/metrics.rs`
+- [x] T020 [US3] Implement `--json` report serialization and `--clear` dispatch behavior in `src/cli.rs`
+- [x] T021 [US3] Emit the documented `cleared` JSON response and preserve exact integer millisecond values in `src/metrics.rs`
 
 **Checkpoint**: Human and JSON reports express the same values, and clear
 starts a fresh metrics period without touching execution state.
@@ -124,9 +124,9 @@ starts a fresh metrics period without touching execution state.
 **Purpose**: Document the contract and prove the complete feature against the
 repository gates.
 
-- [ ] T022 [P] Update `README.md` with `longrun gain`, `--json`, `--clear`, management-command collision, the no-token-estimate boundary, and the feature quickstart link
-- [ ] T023 [P] Validate the end-to-end scenarios in `specs/003-execution-metrics/quickstart.md`
-- [ ] T024 [P] Add a 10,000-record aggregation performance check for the stated scan goal in `tests/metrics.rs`
+- [x] T022 [P] Update `README.md` with `longrun gain`, `--json`, `--clear`, management-command collision, the no-token-estimate boundary, and the feature quickstart link
+- [x] T023 [P] Validate the end-to-end scenarios in `specs/003-execution-metrics/quickstart.md`
+- [x] T024 [P] Add a 10,000-record aggregation performance check for the stated scan goal in `tests/metrics.rs`
 - [ ] T025 Run `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and `cargo test --locked` against `Cargo.toml`, `src/`, and `tests/`
 - [ ] T026 Review implementation evidence against the constitution gates and update `specs/003-execution-metrics/plan.md` if any design or verification claim is no longer true
 
